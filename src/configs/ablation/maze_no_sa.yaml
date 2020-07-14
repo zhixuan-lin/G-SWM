@@ -1,0 +1,99 @@
+seed: 2
+run_num: 1
+model: 'GSWM'
+resume: true
+resume_ckpt: ''
+parallel: false
+device_ids: [2, 1]
+device: 'cuda:7'
+logdir: '../output/logs'
+checkpointdir: '../output/checkpoints'
+evaldir: '../output/eval'
+resultdir: '../output/results'
+
+dataset: 'MAZE'
+
+dataset_roots:
+  MAZE: '../data/MAZE'
+
+solver:
+  optim: 'Adam'
+  lr: 5e-5
+
+vis:
+  ison: true
+  vis_every: 5000
+  indices: [0, 1, 2, 3]
+
+train:
+  batch_size: 16
+  max_epochs: 1000000
+  max_steps: 500000
+  print_every: 1000
+  save_every: 1000
+  num_workers: 4
+  clip_norm: 1.0
+  max_ckpt: 4
+val:
+  evaluator: 'maze'
+  ison: True
+  val_every: 5000
+  batch_size: 16
+  num_workers: 4
+  cond_steps: 10
+  eval_types: ['generation', 'tracking']
+  metrics: ['med', 'mot_iou']
+
+ARCH:
+  Z_CTX_DIM: 16
+  Z_WHAT_DIM: 16
+#  IMG_SIZE: 128
+#  IMG_SHAPE: [128, 128]
+  DETER: False
+  BG_CONDITIONED: False
+  BG_ATTENTION: False
+  G: 8
+  T: [1, 2, 4, 6, 8, 10]
+  T_MILESTONES: [10000, 20000, 30000, 40000, 50000]
+#  T: [10]
+#  T_MILESTONES: []
+  TAU_START_VALUE: 1.0
+  TAU_END_VALUE: 1.0
+  TAU_START_STEP: 1000
+  TAU_END_STEP: 5000
+  Z_SCALE_MEAN_START_VALUE: -1.75
+  Z_SCALE_MEAN_END_VALUE: -1.75
+  PROPOSAL_UPDATE_MIN: 0.1
+  PROPOSAL_UPDATE_MAX: 0.3
+  Z_PRES_PROB_START_VALUE: 1e-10
+  Z_PRES_PROB_END_VALUE: 1e-10
+  Z_PRES_PROB_START_STEP: 0
+  Z_PRES_PROB_END_STEP: 100000
+  Z_SCALE_UPDATE_SCALE: 0.2
+  Z_SHIFT_UPDATE_SCALE: 0.5
+  Z_WHAT_UPDATE_SCALE: 0.2
+  Z_DEPTH_UPDATE_SCALE: 1.0
+  Z_SCALE_STD: 0.1
+  MAX: 16
+
+
+
+
+  BG_ON: True
+  BG_ONLY_STEP: 500
+
+  REJECTION: True
+  REJECTION_THRESHOLD: 0.8
+
+  SIGMA: 0.1
+  SIGMA_ANNEAL: True
+  SIGMA_START_VALUE: 0.1
+  SIGMA_END_VALUE: 1.0
+  SIGMA_START_STEP: 60000
+  SIGMA_END_STEP: 70000
+
+  DISCOVERY_DROPOUT: 0.5
+
+  # Turn off auxiliary loss
+  AUX_PRES_KL: False
+

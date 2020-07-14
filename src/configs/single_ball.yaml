@@ -1,0 +1,81 @@
+seed: 5
+run_num: 1
+model: 'GSWM'
+resume: true
+resume_ckpt: ''
+parallel: false
+device_ids: [2, 1]
+device: 'cuda:7'
+logdir: '../output/logs'
+checkpointdir: '../output/checkpoints'
+evaldir: '../output/eval'
+resultdir: '../output/results'
+
+dataset: 'SINGLE_BALL'
+
+dataset_roots:
+  SINGLE_BALL: '../data/SINGLE_BALL'
+
+solver:
+  optim: 'Adam'
+  lr: 1e-4
+
+vis:
+  ison: true
+  vis_every: 5000
+  indices: [0, 1, 2, 3]
+
+train:
+  batch_size: 16
+  max_epochs: 1000000
+  max_steps: 100000
+  print_every: 1000
+  save_every: 1000
+  num_workers: 4
+  clip_norm: 1.0
+  max_ckpt: 4
+val:
+  ison: False
+  val_every: 5000
+  batch_size: 16
+  num_workers: 4
+  cond_steps: 10
+  eval_types: ['generation', 'tracking']
+  metrics: ['med', 'mot_iou']
+
+ARCH:
+#  IMG_SIZE: 128
+#  IMG_SHAPE: [128, 128]
+  G: 4
+  T: [2, 4, 6, 8, 9]
+  T_MILESTONES: [1000, 2000, 3000, 4000]
+
+
+  TAU_START_VALUE: 1.0
+  TAU_END_VALUE: 1.0
+  TAU_START_STEP: 1000
+  TAU_END_STEP: 5000
+  Z_SCALE_MEAN_START_VALUE: -1.5
+  Z_SCALE_MEAN_END_VALUE: -1.5
+  PROPOSAL_UPDATE_MIN: 0.2
+  PROPOSAL_UPDATE_MAX: 0.4
+  Z_PRES_PROB_START_VALUE: 1e-10
+  Z_PRES_PROB_END_VALUE: 1e-10
+  Z_PRES_PROB_START_STEP: 5000
+  Z_PRES_PROB_END_STEP: 10000
+  Z_SCALE_UPDATE_SCALE: 0.1
+  Z_SHIFT_UPDATE_SCALE: 0.2
+  Z_SCALE_STD: 0.1
+  MAX: 3
+
+
+  Z_CTX_DIM: 128
+
+
+  BG_ON: False
+  BG_ONLY_STEP: 0
+
+  REJECTION: True
+  REJECTION_THRESHOLD: 0.8
+  SIGMA: 0.2
+
