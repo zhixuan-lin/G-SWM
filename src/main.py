@@ -6,7 +6,6 @@ from engine.vis_balls import vis_balls
 from engine.eval_balls import eval_balls
 from engine.eval_maze import eval_maze
 
-
 if __name__ == '__main__':
 
     task_dict = {

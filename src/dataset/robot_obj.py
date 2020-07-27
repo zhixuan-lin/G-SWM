@@ -12,51 +12,53 @@ from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
-class Obj3D(Dataset):
-    def __init__(self, root, mode, ep_len=30, sample_length=20):
+class RobotObj(Dataset):
+    def __init__(self, root, mode, ep_len=60, sample_length=20):
         # path = os.path.join(root, mode)
         assert mode in ['train', 'val', 'test']
-        self.root = os.path.join(root, mode)
+        # root: '../data/robot_obj', mod: 'train'/ 'val'/ 'test'
+        self.root = os.path.join(root, mode) # '../data/robot_obj/train'
         
         self.mode = mode
-        self.sample_length = sample_length
+        self.sample_length = sample_length # 20
         
         
         # Get all numbers
         self.folders = []
-        for file in os.listdir(self.root):
+        # iterate over folders: 'episode1, episode2, ...'
+        for file in os.listdir(self.root): 
             try:
-                self.folders.append(int(file))
+                self.folders.append(int(file.replace('episode', '')))
             except ValueError:
                 continue
-        self.folders.sort()
+        self.folders.sort() # sort by number
         
         self.epsisodes = []
-        self.EP_LEN = ep_len
+        self.EP_LEN = ep_len # -30 # sample_length -20 
         self.seq_per_episode = self.EP_LEN - self.sample_length + 1
         
-        for f in self.folders:
-            dir_name = os.path.join(self.root, str(f))
-            paths = list(glob.glob(osp.join(dir_name, 'test_*.png')))
+        for f in self.folders: # f: episode****
+            dir_name = os.path.join(self.root, 'episode' + str(f)) # '../data/robot_obj/val/0'
+            paths = list(glob.glob(osp.join(dir_name, 'left_shoulder_rgb', '*.png')))
             # if len(paths) != self.EP_LEN:
             #     continue
             # assert len(paths) == self.EP_LEN, 'len(paths): {}'.format(len(paths))
-            get_num = lambda x: int(osp.splitext(osp.basename(x))[0].partition('_')[-1])
-            paths.sort(key=get_num) 
-            self.epsisodes.append(paths)
+            get_num = lambda x: int(osp.splitext(osp.basename(x))[0].partition('_')[0])
+            paths.sort(key=get_num) # soft the file names...
+            self.epsisodes.append(paths) # append lists 
         
     
     def __getitem__(self, index):
         
-        
+        # TODO (cheolhui): debug here
         imgs = []
         if self.mode == 'train':
             # Implement continuous indexing
-            ep = index // self.seq_per_episode # rand_idx / 11; quotient
-            offset = index % self.seq_per_episode # remnant
+            ep = index // self.seq_per_episode
+            offset = index % self.seq_per_episode
             end = offset + self.sample_length
             
-            e = self.epsisodes[ep] # ran idx among 
+            e = self.epsisodes[ep]
             for image_index in range(offset, end):
                 img = Image.open(osp.join(e[image_index]))
                 img = img.resize((64, 64))

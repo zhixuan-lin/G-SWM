@@ -26,6 +26,9 @@ def get_dataset(cfg, mode):
         from .single_ball import SingleBall
         root = osp.join(cfg.dataset_roots.SINGLE_BALL)
         return SingleBall(root, mode)
+    if cfg.dataset == 'ROBOT_OBJ': # TODO (cheolhui); modify this.
+        from .robot_obj import RobotObj
+        return RobotObj(cfg.dataset_roots.ROBOT_OBJ, mode)
     else:
         raise ValueError(f'Dataset "{cfg.dataset}" not defined in dataset.__init__.py')
 

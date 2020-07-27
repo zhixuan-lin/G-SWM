@@ -1,4 +1,7 @@
 import torch
+torch.cuda.set_device(7)
+
+
 
 import sys
 
@@ -83,16 +86,16 @@ def train(cfg):
     
     print('Start training')
     end_flag = False
-    for epoch in range(start_epoch, cfg.train.max_epochs):
+    for epoch in range(start_epoch, cfg.train.max_epochs): # @ config
         if end_flag: break
         start = time.perf_counter()
-        for i, data in enumerate(trainloader):
+        for i, data in enumerate(trainloader): #! 'where we '_getitem_'.
             end = time.perf_counter()
             data_time = end - start
             start = end
             
             imgs, *_ = [d.to(cfg.device) for d in data]
-            model.train()
+            model.train() # TODO(cheolhui): debug this; change mode of Torch model.
             loss, log = model(imgs, global_step)
             # If you are using DataParallel
             loss = loss.mean()

@@ -31,7 +31,7 @@ class GSWM(nn.Module):
             self.sigma = anneal(global_step, ARCH.SIGMA_START_STEP, ARCH.SIGMA_END_STEP,
                                 ARCH.SIGMA_START_VALUE, ARCH.SIGMA_END_VALUE, type='linear')
         
-        # Change curriculum
+        # Change curriculum #! Milestone strategy of curriculum learning.
         assert len(ARCH.T) == len(ARCH.T_MILESTONES) + 1, 'len(T) != len(T_MILESTONES) + 1'
         i = 0
         while i < len(ARCH.T_MILESTONES) and global_step > ARCH.T_MILESTONES[i]:
