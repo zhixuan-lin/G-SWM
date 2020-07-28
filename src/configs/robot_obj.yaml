@@ -3,8 +3,8 @@ run_num: 1
 model: 'GSWM'
 resume: true
 resume_ckpt: ''
-parallel: false
-device_ids: [1, 2, 3]
+parallel: true
+device_ids: [0, 2, 6]
 device: 'cuda:0'
 logdir: '../output/logs'
 checkpointdir: '../output/checkpoints'
