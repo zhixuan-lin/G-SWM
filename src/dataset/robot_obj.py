@@ -53,12 +53,12 @@ class RobotObj(Dataset):
                 ep_len += 1
                 dir_name = os.path.join(self.root, 'variation' + str(v), 'episodes', 'episode' + str(f)) # '../data/robot_obj/val/0'
                 paths = list(glob.glob(osp.join(dir_name, 'left_shoulder_rgb', '*.png')))
-                paths = paths[60:] # crop out first 60 episodes 
                 # if len(paths) != self.EP_LEN:
                 #     continue
                 # assert len(paths) == self.EP_LEN, 'len(paths): {}'.format(len(paths))
                 get_num = lambda x: int(osp.splitext(osp.basename(x))[0].partition('_')[0])
                 paths.sort(key=get_num) # soft the file names...
+                paths = paths[58:] # crop out first 60 episodes 
                 self.epsisodes.append(paths) # append lists 
             
     

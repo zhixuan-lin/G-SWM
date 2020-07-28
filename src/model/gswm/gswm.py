@@ -66,7 +66,7 @@ class GSWM(nn.Module):
 
         """
         self.anneal(global_step)
-        seq = self.random_crop(seq, self.T)
+        seq = self.random_crop(seq, self.T) # current T is 2
         B, T, C, H, W = seq.size()
     
         # Doing tracking

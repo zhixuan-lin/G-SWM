@@ -5,7 +5,7 @@ resume: true
 resume_ckpt: ''
 parallel: false
 device_ids: [1, 2, 3]
-device: 'cuda:6'
+device: 'cuda:0'
 logdir: '../output/logs'
 checkpointdir: '../output/checkpoints'
 evaldir: '../output/eval'
@@ -31,8 +31,8 @@ train:
   batch_size: 16
   max_epochs: 100000 # 1000000
   max_steps:  100000 # 1000000
-  print_every: 500 # 1000
-  save_every: 500 # 1000
+  print_every: 1000 # 1000
+  save_every: 1000 # 1000
   num_workers: 4
   clip_norm: 1.0
   max_ckpt: 4
