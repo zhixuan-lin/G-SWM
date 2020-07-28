@@ -5,7 +5,7 @@ resume: true
 resume_ckpt: ''
 parallel: false
 device_ids: [1, 2, 3]
-device: 'cuda:7'
+device: 'cuda:6'
 logdir: '../output/logs'
 checkpointdir: '../output/checkpoints'
 evaldir: '../output/eval'
@@ -15,7 +15,8 @@ resultdir: '../output/results'
 dataset: 'ROBOT_OBJ'
 
 dataset_roots:
-  ROBOT_OBJ: '../data/robot_obj'
+  # ROBOT_OBJ: '../data/robot_obj'
+  ROBOT_OBJ: '../data/rob_obj_inter_base_view'
 
 solver:
   optim: 'Adam'

@@ -1,6 +1,7 @@
 import torch
-torch.cuda.set_device(7)
-
+GPU_NUM = 5 
+device = torch.device(f'cuda:{GPU_NUM}' if torch.cuda.is_available() else 'cpu')
+torch.cuda.set_device(device) # change allocation of current GPU
 
 
 import sys
@@ -93,10 +94,9 @@ def train(cfg):
             end = time.perf_counter()
             data_time = end - start
             start = end
-            
             imgs, *_ = [d.to(cfg.device) for d in data]
             model.train() # TODO(cheolhui): debug this; change mode of Torch model.
-            loss, log = model(imgs, global_step)
+            loss, log = model(imgs, global_step) # In: imgs [B, T, 3, dim, dim]
             # If you are using DataParallel
             loss = loss.mean()
             optimizer.zero_grad()

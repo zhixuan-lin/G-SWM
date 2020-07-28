@@ -104,7 +104,7 @@ class GSWM(nn.Module):
     def track(self, seq, discovery_dropout):
         B, T, C, H, W = seq.size()
         # Process background
-        if ARCH.BG_ON:
+        if ARCH.BG_ON: # TODO (cheolhui): checkout the backgrounds
             bg_things = self.bg_module.encode(seq)
         else:
             bg_things = dict(bg=torch.zeros_like(seq), kl_bg=torch.zeros(B, T, device=seq.device))

@@ -13,7 +13,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 class RobotObj(Dataset):
-    def __init__(self, root, mode, ep_len=60, sample_length=20):
+    def __init__(self, root, mode, ep_len=30, sample_length=20):
         # path = os.path.join(root, mode)
         assert mode in ['train', 'val', 'test']
         # root: '../data/robot_obj', mod: 'train'/ 'val'/ 'test'
@@ -24,29 +24,43 @@ class RobotObj(Dataset):
         
         
         # Get all numbers
-        self.folders = []
         # iterate over folders: 'episode1, episode2, ...'
+
+        self.var_idx = 0
         for file in os.listdir(self.root): 
             try:
-                self.folders.append(int(file.replace('episode', '')))
+                self.var_idx += 1
             except ValueError:
                 continue
-        self.folders.sort() # sort by number
+        self.variations = []
+        for var in range(self.var_idx):
+            self.folders = []
+            for file in os.listdir(os.path.join(self.root, 'variation' + str(var), 'episodes')): 
+                try:
+                    self.folders.append(int(file.replace('episode', '')))
+                except ValueError:
+                    continue
+            self.folders.sort() # sort by number
+            self.variations.append((var, self.folders))
         
         self.epsisodes = []
         self.EP_LEN = ep_len # -30 # sample_length -20 
         self.seq_per_episode = self.EP_LEN - self.sample_length + 1
         
-        for f in self.folders: # f: episode****
-            dir_name = os.path.join(self.root, 'episode' + str(f)) # '../data/robot_obj/val/0'
-            paths = list(glob.glob(osp.join(dir_name, 'left_shoulder_rgb', '*.png')))
-            # if len(paths) != self.EP_LEN:
-            #     continue
-            # assert len(paths) == self.EP_LEN, 'len(paths): {}'.format(len(paths))
-            get_num = lambda x: int(osp.splitext(osp.basename(x))[0].partition('_')[0])
-            paths.sort(key=get_num) # soft the file names...
-            self.epsisodes.append(paths) # append lists 
-        
+        for v, folders in self.variations: # var_idx, folder_idx
+            ep_len = 0
+            for f in folders:
+                ep_len += 1
+                dir_name = os.path.join(self.root, 'variation' + str(v), 'episodes', 'episode' + str(f)) # '../data/robot_obj/val/0'
+                paths = list(glob.glob(osp.join(dir_name, 'left_shoulder_rgb', '*.png')))
+                paths = paths[60:] # crop out first 60 episodes 
+                # if len(paths) != self.EP_LEN:
+                #     continue
+                # assert len(paths) == self.EP_LEN, 'len(paths): {}'.format(len(paths))
+                get_num = lambda x: int(osp.splitext(osp.basename(x))[0].partition('_')[0])
+                paths.sort(key=get_num) # soft the file names...
+                self.epsisodes.append(paths) # append lists 
+            
     
     def __getitem__(self, index):
         
