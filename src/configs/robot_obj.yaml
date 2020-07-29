@@ -1,11 +1,11 @@
 seed: 0
 run_num: 1
 model: 'GSWM'
-resume: true
+resume: false #! whether to load checkpoints
 resume_ckpt: ''
-parallel: true
+parallel: false
 device_ids: [0, 2, 6]
-device: 'cuda:0'
+device: 'cuda:6'
 logdir: '../output/logs'
 checkpointdir: '../output/checkpoints'
 evaldir: '../output/eval'
@@ -17,6 +17,7 @@ dataset: 'ROBOT_OBJ'
 dataset_roots:
   # ROBOT_OBJ: '../data/robot_obj'
   ROBOT_OBJ: '../data/rob_obj_inter_base_view'
+  ROBOT_OBJ: '../data/rob_obj_inter_base_view_colored'
 
 solver:
   optim: 'Adam'
