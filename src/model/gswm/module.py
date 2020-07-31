@@ -79,6 +79,7 @@ class MultiLayerSubpixel(nn.Module):
     def forward(self, x):
     
         return self.net(x)
+
 class MLP(nn.Module):
     
     def __init__(self, sizes, act, output_act=None):
@@ -111,7 +112,7 @@ class MLP(nn.Module):
             x: (*, D)
         """
         *ORI, D = x.size()
-        x = x.view(np.prod(ORI), D)
+        x = x.view(np.prod(ORI), D) #! very neat wat to chunk the axes
         
         for i, layer in enumerate(self.layers):
             x = layer(x)

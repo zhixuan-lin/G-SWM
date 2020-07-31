@@ -25,14 +25,14 @@ solver:
 
 vis:
   ison: true
-  vis_every: 2000
+  vis_every: 10
   indices: [0, 1, 2, 3]
 
 train:
   batch_size: 16
   max_epochs: 100000 # 1000000
   max_steps:  100000 # 1000000
-  print_every: 1000 # 1000
+  print_every: 10 # 1000
   save_every: 1000 # 1000
   num_workers: 4
   clip_norm: 1.0

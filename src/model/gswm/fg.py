@@ -198,16 +198,16 @@ class FgModule(nn.Module):
             A dictionary. Everything will be (B, T, ...). Refer to things_t.
         """
         B, T, C, H, W = seq.size()
-        # Empty, N=0
-        state_post, state_prior, z, ids = self.get_dummy_things(B, seq.device)
+        #! Empty, N=0, clean states
+        state_post, state_prior, z, ids = self.get_dummy_things(B, seq.device) # all params are zeros.
         start_id = torch.zeros(B, device=seq.device).long()
         
         things = defaultdict(list)
         first = True
-        for t in range(T):
+        for t in range(T): # track over time seq.
             # (B, 3, H, W)
-            x = seq[:, t]
-            # Update object states
+            x = seq[:, t] # seq is concat of image of fg masks
+            # Update object states: propagate from prev step to current step
             state_post_prop, state_prior_prop, z_prop, kl_prop, proposal = self.propagate(x, state_post, state_prior, z,
                                                                                           bg[:, t])
             ids_prop = ids
@@ -344,7 +344,7 @@ class FgModule(nn.Module):
                 kl_dyna (B,)
         )
         """
-        B, *_ = x.size()
+        B, *_ = x.size() #! Wow, this kinda operation was possible
         
         # (B, D, G, G)
         x_enc = self.img_encoder(x)
@@ -492,12 +492,12 @@ class FgModule(nn.Module):
     
     def propagate(self, x, state_post_prev, state_prior_prev, z_prev, bg):
         """
-        One step of propagation posterior
+        #! One step of propagation posterior
         Args:
             x: (B, 3, H, W), img
             (h, c), (h, c): each (B, N, D)
-            z_prev:
-                z_pres: (B, N, 1)
+            z_prev: #! what's inside the latent
+                z_pres: (B, N, 1) -> Bernoulli distrib.
                 z_depth: (B, N, 1)
                 z_where: (B, N, 4)
                 z_what: (B, N, D)
@@ -524,54 +524,54 @@ class FgModule(nn.Module):
         z_pres_prev, z_depth_prev, z_where_prev, z_what_prev, z_dyna_prev = z_prev
         B, N, _ = z_pres_prev.size()
         
-        if N == 0:
-            # No object is propagated
+        if N == 0: # num of entities.
+            # No object is propagated -> then do discovery
             return state_post_prev, state_prior_prev, z_prev, (0.0, 0.0, 0.0, 0.0, 0.0), z_prev[2]
         
-        h_post, c_post = state_post_prev
-        h_prior, c_prior = state_prior_prev
-        
+        h_post, c_post = state_post_prev # [B, N, 128], [B, N, 128]
+        h_prior, c_prior = state_prior_prev # [B, N, 128], [B, N, 128]
+        #! 1) Inference procedure of "propagate": Sec A.2 of supl.
         # Predict proposal locations, (B, N, 2)
-        proposal_offset = self.pred_proposal(h_post)
-        proposal = torch.zeros_like(z_where_prev)
-        # Update size only
+        proposal_offset = self.pred_proposal(h_post) #! Eq.(18) of supl., by posterior OS-RNN; h_{hat}_{t-1}^k
+        proposal = torch.zeros_like(z_where_prev) # [B, N, 4]
+        # Update size only; extract proposal region of the image, centered @ the prev. obj. location o_{t-1}^{xy,k} 
         proposal[..., 2:] = z_where_prev[..., 2:]
-        proposal[..., :2] = z_where_prev[..., :2] + ARCH.PROPOSAL_UPDATE_MIN + (
+        proposal[..., :2] = z_where_prev[..., :2] + ARCH.PROPOSAL_UPDATE_MIN + ( #! Eq.(19) of supl.
                 ARCH.PROPOSAL_UPDATE_MAX - ARCH.PROPOSAL_UPDATE_MIN) * torch.sigmoid(proposal_offset)
         
         # Get proposal glimpses
-        # (B*N, 3, H, W)
-        x_repeat = torch.repeat_interleave(x[:, :3], N, dim=0)
-        
-        # (B*N, 3, H, W)
-        proposal_glimpses = spatial_transform(x_repeat, proposal.view(B * N, 4),
+        # (B*N, 3, H, W) ->
+        x_repeat = torch.repeat_interleave(x[:, :3], N, dim=0) # crop-out the first three channel.
+        #! arch.glimpse_shape = [16, 16]
+        # (B*N, 3, H, W) #! Eq.(4) of paper
+        proposal_glimpses = spatial_transform(image=x_repeat, z_where=proposal.view(B * N, 4), #! Eq.(20) of supl.
                                               out_dims=(B * N, 3, *ARCH.GLIMPSE_SHAPE))
         # (B, N, 3, H, W)
         proposal_glimpses = proposal_glimpses.view(B, N, 3, *ARCH.GLIMPSE_SHAPE)
         # (B, N, D)
-        proposal_enc = self.proposal_encoder(proposal_glimpses)
+        proposal_enc = self.proposal_encoder(proposal_glimpses) #! Eq.(21) of supl.
         # (B, N, D)
         # This will be used to condition everything
-        enc = torch.cat([proposal_enc, h_post], dim=-1)
+        enc = torch.cat([proposal_enc, h_post], dim=-1) # [B, N, D] + [B, N, D] = [B, N, 2D] 
         
-        z_dyna_loc, z_dyna_scale = self.latent_post_prop(enc)
+        z_dyna_loc, z_dyna_scale = self.latent_post_prop(enc) #! Eq.(22) of supl.
         z_dyna_post = Normal(z_dyna_loc, z_dyna_scale)
-        z_dyna = z_dyna_post.rsample()
-        
+        z_dyna = z_dyna_post.rsample() #! Eq.(23) of supl.
+        # given dynamics latent (z_{dyna}) from posterior (z_dyna_post), the attribute latents are computed as follows
         # (B, N, D)
-        (z_pres_prob, z_depth_offset_loc, z_depth_offset_scale, z_where_offset_loc,
+        (z_pres_prob, z_depth_offset_loc, z_depth_offset_scale, z_where_offset_loc, #! Eq.(13) of supl.
          z_where_offset_scale, z_what_offset_loc, z_what_offset_scale,
          z_depth_gate, z_where_gate, z_what_gate) = self.pres_depth_where_what_prior(z_dyna)
         
         # Sampling
-        z_pres_post = RelaxedBernoulli(self.tau, probs=z_pres_prob)
+        z_pres_post = RelaxedBernoulli(self.tau, probs=z_pres_prob)  #! Eq.(14) of supl.
         z_pres = z_pres_post.rsample()
-        z_pres = z_pres_prev * z_pres
+        z_pres = z_pres_prev * z_pres # -> refer to Sec 2.5 of PRML
         
         z_where_post = Normal(z_where_offset_loc, z_where_offset_scale)
-        z_where_offset = z_where_post.rsample()
+        z_where_offset = z_where_post.rsample()  #! Eq.(16) of supl.
         z_where = torch.zeros_like(z_where_prev)
-        # Scale
+        # Scale; [B, N, 4] -> [B, N, 2] (mean), [B, N, 2] (shift). 
         z_where[..., :2] = z_where_prev[..., :2] + ARCH.Z_SCALE_UPDATE_SCALE * z_where_gate[..., :2] * torch.tanh(
             z_where_offset[..., :2])
         # Shift
@@ -579,16 +579,16 @@ class FgModule(nn.Module):
             z_where_offset[..., 2:])
         
         z_depth_post = Normal(z_depth_offset_loc, z_depth_offset_scale)
-        z_depth_offset = z_depth_post.rsample()
-        z_depth = z_depth_prev + ARCH.Z_DEPTH_UPDATE_SCALE * z_depth_gate * z_depth_offset
+        z_depth_offset = z_depth_post.rsample()  #! Eq.(15) of supl.
+        z_depth = z_depth_prev + ARCH.Z_DEPTH_UPDATE_SCALE * z_depth_gate * z_depth_offset # [B, D, 1]
         
         z_what_post = Normal(z_what_offset_loc, z_what_offset_scale)
-        z_what_offset = z_what_post.rsample()
-        z_what = z_what_prev + ARCH.Z_WHAT_UPDATE_SCALE * z_what_gate * torch.tanh(z_what_offset)
+        z_what_offset = z_what_post.rsample()  #! Eq.(17) of supl.
+        z_what = z_what_prev + ARCH.Z_WHAT_UPDATE_SCALE * z_what_gate * torch.tanh(z_what_offset) # [B, D, 64]
         z = (z_pres, z_depth, z_where, z_what, z_dyna)
         
         
-        # Update states
+        # Update states via RNN; In: state_*_prev - hidden & cell state of RNN, z - tuple of z_att and z_dyna 
         state_post = self.temporal_encode(state_post_prev, z, bg, prior_or_post='post')
         state_prior = self.temporal_encode(state_prior_prev, z, bg, prior_or_post='prior')
         
@@ -712,8 +712,8 @@ class FgModule(nn.Module):
         h_post_prev, c_post_prev = state_prev
         
         # The feature of one object include the following
-        # (B, N, D)
-        feat = torch.cat(z + (h_post_prev,), dim=-1)
+        # (B, N, D); 
+        feat = torch.cat(z + (h_post_prev,), dim=-1) # TODO (cheolhui): figure out
         # (B, N, D)
         enc_self = prop_cond_self(feat)
         
@@ -728,20 +728,20 @@ class FgModule(nn.Module):
         dist_matrix = z_shift_self - z_shift_other
         # (B, N, 1, D) -> (B, N, N, D)
         # feat_self = enc_self[:, :, None]
-        feat_self = feat[:, :, None]
+        feat_self = feat[:, :, None] # (B, N, 1, D)
         feat_matrix_self = feat_self.expand(B, N, N, self.Z_DIM + ARCH.RNN_HIDDEN_DIM)
-        # (B, 1, N, D) -> (B, N, N, D)
+        # (B, 1, N, D) -> (B, N, N, D) #? what is the difference?
         feat_other = feat[:, None]
         feat_matrix_other = feat_other.expand(B, N, N, self.Z_DIM + ARCH.RNN_HIDDEN_DIM)
         
         # TODO: Detail here, replace absolute positions with relative ones
-        offset = ARCH.Z_PRES_DIM + ARCH.Z_DEPTH_DIM + ARCH.Z_SCALE_DIM
+        offset = ARCH.Z_PRES_DIM + ARCH.Z_DEPTH_DIM + ARCH.Z_SCALE_DIM # 1+1+2
         # Must clone. Otherwise there will be multiple write
         feat_matrix_other = feat_matrix_other.clone()
         feat_matrix_other[..., offset:offset + ARCH.Z_SHIFT_DIM] = dist_matrix
-        # (B, N, N, 2D)
+        # (B, N, N, D) + (B, N, N, D) = (B, N, N, 2D)
         feat_matrix = torch.cat([feat_matrix_self, feat_matrix_other], dim=-1)
-        # (B, N, N, D)
+        # (B, N, N, D) # NOTE that dim Ds may differ among variables
         relational_matrix = prop_cond_relational(feat_matrix)
         
         # COMPUTE WEIGHTS
@@ -827,7 +827,7 @@ class FgModule(nn.Module):
                 z_where: (B, N, D)
                 z_what: (B, N, D)
             prop_cond: (B, N, D), t-1
-            bg: (B, D), t
+            bg: [B, 3, dim, dim], t
             prior_or_post: either 'prior' or 'post
 
         Returns:
@@ -1131,7 +1131,7 @@ class ImgEncoder(nn.Module):
         """
         Get image feature
         Args:
-            x: (B, 3, H, W)
+            x: (B, 3, H, W) -> shouldn't this be [B, 6, H , W]?
 
         Returns:
             enc: (B, 128, G, G)
@@ -1190,15 +1190,15 @@ class LatentPostProp(nn.Module):
     def forward(self, x):
         """
         Args:
-            x: (B, D, G, G)
+            x: (B, N, 2D)
 
         Returns:
             z_dyna_loc, z_dyna_scale: (B, 1, G, G)
         """
         B = x.size(0)
-        params = self.enc(x)
+        params = self.enc(x) # [B, N, 2D]
         # (B, G*G, D)
-        (z_dyna_loc, z_dyna_scale) = torch.chunk(params, chunks=2, dim=-1)
+        (z_dyna_loc, z_dyna_scale) = torch.chunk(params, chunks=2, dim=-1) # [B, N, D]
         z_dyna_scale = F.softplus(z_dyna_scale) + 1e-4
         
         return z_dyna_loc, z_dyna_scale
@@ -1232,7 +1232,7 @@ class LatentPriorProp(nn.Module):
 
 
 class PresDepthWhereWhatPrior(nn.Module):
-    """p(z_att|z_dyna)"""
+    """p(z_att|z_dyna), where z_att = [z_pres, z_depth, z_where, z_what]"""
     
     def __init__(self):
         nn.Module.__init__(self)
@@ -1258,8 +1258,8 @@ class PresDepthWhereWhatPrior(nn.Module):
             z_what_gate: (B, N, D)
         """
         # (B, N, D)
-        params = self.enc(enc)
-        
+        params = self.enc(enc) # 
+        # split into [Z_PRES(1), Z_DEPTH(1), Z_DEPTH, Z_WHERE(4), Z_WHERE, Z_WHAT(64), Z_WHAT, Z_DEPTH, Z_WHERE, Z_WHAT] = 208
         (z_pres_prob, z_depth_loc, z_depth_scale, z_where_loc, z_where_scale,
          z_what_loc, z_what_scale,
          z_depth_gate, z_where_gate, z_what_gate) = torch.split(params,
@@ -1269,14 +1269,14 @@ class PresDepthWhereWhatPrior(nn.Module):
                                                                                             ARCH.Z_WHERE_DIM,
                                                                                             ARCH.Z_WHAT_DIM]
                                                                 , dim=-1)
-        z_pres_prob = torch.sigmoid(z_pres_prob)
-        z_depth_scale = F.softplus(z_depth_scale) + 1e-4
-        z_where_scale = F.softplus(z_where_scale) + 1e-4
-        z_what_scale = F.softplus(z_what_scale) + 1e-4
+        z_pres_prob = torch.sigmoid(z_pres_prob) # [B, N, 1]
+        z_depth_scale = F.softplus(z_depth_scale) + 1e-4 # [B, N, 1]
+        z_where_scale = F.softplus(z_where_scale) + 1e-4 # [B, N, 4]
+        z_what_scale = F.softplus(z_what_scale) + 1e-4 # [B, N, 64]
         
-        z_depth_gate = torch.sigmoid(z_depth_gate)
-        z_where_gate = torch.sigmoid(z_where_gate)
-        z_what_gate = torch.sigmoid(z_what_gate)
+        z_depth_gate = torch.sigmoid(z_depth_gate) # [B, N, 1]
+        z_where_gate = torch.sigmoid(z_where_gate) # [B, N, 4]
+        z_what_gate = torch.sigmoid(z_what_gate) # [B, N, 64]
         
         return z_pres_prob, z_depth_loc, z_depth_scale, z_where_loc, z_where_scale, z_what_loc, z_what_scale, z_depth_gate, z_where_gate, z_what_gate
 
@@ -1336,8 +1336,8 @@ class ProposalEncoder(nn.Module):
         """
         B, N, C, H, W = x.size()
         x = x.view(B * N, 3, H, W)
-        x = self.enc(x)
-        x = x.flatten(start_dim=1)
+        x = self.enc(x) # [B*N, D, 1, 1]
+        x = x.flatten(start_dim=1) # [B*N, D]
         return self.enc_what(x).view(B, N, ARCH.PROPOSAL_ENC_DIM)
 
 
