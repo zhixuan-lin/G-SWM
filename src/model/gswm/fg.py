@@ -592,11 +592,11 @@ class FgModule(nn.Module):
         state_post = self.temporal_encode(state_post_prev, z, bg, prior_or_post='post')
         state_prior = self.temporal_encode(state_prior_prev, z, bg, prior_or_post='prior')
         
-        z_dyna_loc, z_dyna_scale = self.latent_prior_prop(h_prior)
+        z_dyna_loc, z_dyna_scale = self.latent_prior_prop(h_prior) #! Eq(11) of supl.
         z_dyna_prior = Normal(z_dyna_loc, z_dyna_scale)
-        kl_dyna = kl_divergence(z_dyna_post, z_dyna_prior)
+        kl_dyna = kl_divergence(z_dyna_post, z_dyna_prior) #! we get post & prior z_{dyna} from each Eq.(23) and Eq.(12)
         
-        # This is not kl divergence. This is an auxialiary loss
+        #! This is not kl divergence. This is an auxialiary loss q(z_pres|) is fit to fixed prior
         kl_pres = kl_divergence_bern_bern(z_pres_prob, torch.full_like(z_pres_prob, self.z_pres_prior_prob))
         # If we don't want this auxiliary loss
         if not ARCH.AUX_PRES_KL:
@@ -604,11 +604,11 @@ class FgModule(nn.Module):
         
         # Reduced to (B,)
         
-        # Again, this is not really kl
+        #! Sec. 3.4.2, Eq.(10) of paper; Again, this is not really kl
         kl_pres = kl_pres.flatten(start_dim=1).sum(-1)
         kl_dyna = kl_dyna.flatten(start_dim=1).sum(-1)
         
-        # We are not using q, so these will be zero
+        # We are not using q, so these will be zero: ->  Only prior exist?
         kl_where = torch.zeros_like(kl_pres)
         kl_what = torch.zeros_like(kl_pres)
         kl_depth = torch.zeros_like(kl_pres)
@@ -713,7 +713,7 @@ class FgModule(nn.Module):
         
         # The feature of one object include the following
         # (B, N, D); 
-        feat = torch.cat(z + (h_post_prev,), dim=-1) # TODO (cheolhui): figure out
+        feat = torch.cat(z + (h_post_prev,), dim=-1) # described in Sec.3.3.1
         # (B, N, D)
         enc_self = prop_cond_self(feat)
         
@@ -739,7 +739,7 @@ class FgModule(nn.Module):
         # Must clone. Otherwise there will be multiple write
         feat_matrix_other = feat_matrix_other.clone()
         feat_matrix_other[..., offset:offset + ARCH.Z_SHIFT_DIM] = dist_matrix
-        # (B, N, N, D) + (B, N, N, D) = (B, N, N, 2D)
+        # (B, N, N, D) + (B, N, N, D) = (B, N, N, 2D); self + others
         feat_matrix = torch.cat([feat_matrix_self, feat_matrix_other], dim=-1)
         # (B, N, N, D) # NOTE that dim Ds may differ among variables
         relational_matrix = prop_cond_relational(feat_matrix)
@@ -750,11 +750,11 @@ class FgModule(nn.Module):
         # (B, N, >N, 1)
         weight_matrix = weight_matrix.softmax(dim=2)
         # Times z_pres (B, N, 1)-> (B, 1, N, 1)
-        weight_matrix = weight_matrix * z_pres[:, None]
+        weight_matrix = weight_matrix * z_pres[:, None] # shape is kept same.
         # Self mask, set diagonal elements to zero. (B, >N, >N, 1)
         # weights.diagonal: (B, 1, N)
-        diag = weight_matrix.diagonal(dim1=1, dim2=2)
-        diag *= 0.0
+        diag = weight_matrix.diagonal(dim1=1, dim2=2) # get the diagonal matrix
+        diag *= 0.0 # remove the self interaction
         # Renormalize (B, N, >N, 1)
         weight_matrix = weight_matrix / (weight_matrix.sum(dim=2, keepdim=True) + 1e-4)
         
@@ -762,7 +762,7 @@ class FgModule(nn.Module):
         enc_relational = torch.sum(weight_matrix * relational_matrix, dim=2)
         
         # (B, N, D)
-        prop_cond = enc_self + enc_relational
+        prop_cond = enc_self + enc_relational #! Eq.(3) of paper.
         
         # (B, N, D)
         return prop_cond
@@ -838,9 +838,9 @@ class FgModule(nn.Module):
         assert prior_or_post in ['prior', 'post']
         
         B, N, _ = state[0].size()
-        prop_cond = self.compute_prop_cond(z, state, prior_or_post)
-        bg_enc = self.bg_attention(bg, z)
-        # (B, N, D)
+        prop_cond = self.compute_prop_cond(z, state, prior_or_post) # Sec. 3.3.1 - Interaction & Occlusion 
+        bg_enc = self.bg_attention(bg, z) # Sec. 3.3.2 - Situation Awareness
+        # bg_enc - (B, N, D)
         # Also encode interaction here
         z = torch.cat(z + (prop_cond, bg_enc), dim=-1)
         
@@ -978,7 +978,7 @@ class FgModule(nn.Module):
     
     def bg_attention(self, bg, z):
         """
-        AOE
+        AOE (Attention On Environment)
         
         Args:
             bg: (B, C, H, W)
@@ -998,14 +998,14 @@ class FgModule(nn.Module):
             
         if ARCH.BG_ATTENTION:
             # (G, G), (G, G)
-            proposal = z_where.clone()
-            proposal[..., :2] += ARCH.BG_PROPOSAL_SIZE
+            proposal = z_where.clone() # [B, T, 4 ]
+            proposal[..., :2] += ARCH.BG_PROPOSAL_SIZE # add 0.25 for each [B, T, 2]
             
             # Get proposal glimpses
             # (B*N, 3, H, W)
             x_repeat = torch.repeat_interleave(bg, N, dim=0)
             
-            # (B*N, 3, H, W)
+            # (B*N, 3, H, W) #! Eq.(4) & (5)
             proposal_glimpses = spatial_transform(x_repeat, proposal.view(B * N, 4),
                                                   out_dims=(B * N, 3, *ARCH.GLIMPSE_SHAPE))
             # (B, N, 3, H, W)
@@ -1226,7 +1226,7 @@ class LatentPriorProp(nn.Module):
         params = self.enc(x)
         # (B, G*G, D)
         (z_dyna_loc, z_dyna_scale) = torch.chunk(params, chunks=2, dim=-1)
-        z_dyna_scale = F.softplus(z_dyna_scale) + 1e-4
+        z_dyna_scale = F.softplus(z_dyna_scale) + 1e-4 #!Eq.(12) of supl
         
         return z_dyna_loc, z_dyna_scale
 

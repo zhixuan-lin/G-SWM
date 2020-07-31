@@ -112,7 +112,7 @@ class MLP(nn.Module):
             x: (*, D)
         """
         *ORI, D = x.size()
-        x = x.view(np.prod(ORI), D) #! very neat wat to chunk the axes
+        x = x.view(np.prod(ORI), D) #! very neat wat to chunk multiple axes in to one
         
         for i, layer in enumerate(self.layers):
             x = layer(x)
