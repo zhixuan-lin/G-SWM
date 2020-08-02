@@ -214,17 +214,17 @@ class FgModule(nn.Module):
             if first or torch.rand(1) > discovery_dropout: # discovery for intervention of new object
                 state_post_disc, state_prior_disc, z_disc, ids_disc, kl_disc = self.discover(x, z_prop, bg[:, t], start_id)
                 first = False
-            else:
+            else: # Do not conduct discovery
                 state_post_disc, state_prior_disc, z_disc, ids_disc = self.get_dummy_things(B, seq.device)
                 kl_disc = (0.0, 0.0, 0.0, 0.0, 0.0)
             
             # TODO: for proposal of discovery, we are just using z_where
-            # Combine discovered and propagated things
+            #! Combine discovered and propagated things, and sort by p(z_pres)
             state_post, state_prior, z, ids, proposal = self.combine(
                 state_post_disc, state_prior_disc, z_disc, ids_disc, z_disc[2],
                 state_post_prop, state_prior_prop, z_prop, ids_prop, proposal
             )
-            kl = [x + y for (x, y) in zip(kl_prop, kl_disc)]
+            kl = [x + y for (x, y) in zip(kl_prop, kl_disc)] # make a paired list of kl-divergences
             fg, alpha_map = self.render(z)
             start_id = ids.max(dim=1)[0] + 1
             
@@ -376,7 +376,7 @@ class FgModule(nn.Module):
         z_what_post = Normal(z_what_post_loc, z_what_post_scale)
         z_what = z_what_post.rsample() #! Eq.(38) of supl
         
-        # Combine
+        # Combine the posterior samples z_{***}
         z = (z_pres, z_depth, z_where, z_what, z_dyna)
 
         # Rejection
@@ -415,7 +415,7 @@ class FgModule(nn.Module):
         kl_dyna = kl_divergence(z_dyna_post, z_dyna_prior)
         kl_dyna = kl_dyna
         
-        # Sum over non-batch dimensions
+        #! Sum over non-batch dimensions 
         kl_pres = kl_pres.flatten(start_dim=1).sum(1)
         kl_where = kl_where.flatten(start_dim=1).sum(1)
         kl_what = kl_what.flatten(start_dim=1).sum(1)
@@ -869,7 +869,7 @@ class FgModule(nn.Module):
             alpha_map: (B, 1, H, W)
         """
         z_pres, z_depth, z_where, z_what, z_dyna = z
-        
+        #! Pg.3 of supl.
         B, N, _ = z_pres.size()
         # Reshape to make things easier
         z_pres = z_pres.view(B * N, -1)
@@ -878,30 +878,30 @@ class FgModule(nn.Module):
         
         # Decoder z_what
         # (B*N, 3, H, W), (B*N, 1, H, W)
-        o_att, alpha_att = self.glimpse_decoder(z_what)
+        o_att, alpha_att = self.glimpse_decoder(z_what) #! Eq.(42) of supl.
         
         # (B*N, 1, H, W)
-        alpha_att_hat = alpha_att * z_pres[..., None, None]
+        alpha_att_hat = alpha_att * z_pres[..., None, None] #! Eq.(43) of supl.
         # (B*N, 3, H, W)
-        y_att = alpha_att_hat * o_att
+        y_att = alpha_att_hat * o_att #! Eq.(44) of supl.
+        # y_att_(hat) and alpha_att_hat are of small glimpse size (H_g * W_g) 
+        # To full resolution, apply inverse spatial transform (ST) (B*N, 1, H, W)
+        y_att = spatial_transform(y_att, z_where, (B * N, 3, *ARCH.IMG_SHAPE), inverse=True) #! Eq.(45) of supl.
         
         # To full resolution, (B*N, 1, H, W)
-        y_att = spatial_transform(y_att, z_where, (B * N, 3, *ARCH.IMG_SHAPE), inverse=True)
-        
-        # To full resolution, (B*N, 1, H, W)
-        alpha_att_hat = spatial_transform(alpha_att_hat, z_where, (B * N, 1, *ARCH.IMG_SHAPE), inverse=True)
-        
+        alpha_att_hat = spatial_transform(alpha_att_hat, z_where, (B * N, 1, *ARCH.IMG_SHAPE), inverse=True) #! Eq.(46) of supl.
+        # Reshape back to original shape
         y_att = y_att.view(B, N, 3, *ARCH.IMG_SHAPE)
         alpha_att_hat = alpha_att_hat.view(B, N, 1, *ARCH.IMG_SHAPE)
-        
-        # (B, N, 1, H, W). H, W are glimpse size.
+        #! why logit is "-z_depth" ...?: depth increase -> less weight, thus -z_depth
+        # (B, N, 1, H, W). H, W are glimpse size. #? why logit is "-z_depth" ...?
         importance_map = alpha_att_hat * torch.sigmoid(-z_depth[..., None, None])
-        importance_map = importance_map / (torch.sum(importance_map, dim=1, keepdim=True) + 1e-5)
+        importance_map = importance_map / (torch.sum(importance_map, dim=1, keepdim=True) + 1e-5) #! Eq.(47) of supl.
         
         # Final fg (B, N, 3, H, W)
-        fg = (y_att * importance_map).sum(dim=1)
+        fg = (y_att * importance_map).sum(dim=1) #! Eq.(48) of supl.
         # Fg mask (B, N, 1, H, W)
-        alpha_map = (importance_map * alpha_att_hat).sum(dim=1)
+        alpha_map = (importance_map * alpha_att_hat).sum(dim=1) #! Eq.(49) of supl.
         
         return fg, alpha_map
     
@@ -910,16 +910,16 @@ class FgModule(nn.Module):
         
         Args:
             z_pres: (B, N, 1)
-            *kargs: each (B, N, *)
+            *kargs: each (B, N, *) -> state_post, state_prior, z, ids, proposal
 
-        Returns:
+        Returns:ㅡ
             each (B, N, *)
         """
         # Take index
         # 1. sort by z_pres
         # 2. truncate
         # (B, N)
-        indices = torch.argsort(z_pres, dim=1, descending=True)[..., 0]
+        indices = torch.argsort(z_pres, dim=1, descending=True)[..., 0] # sort along G*G dim
         # Truncate
         indices = indices[:, :ARCH.MAX]
         
@@ -930,7 +930,7 @@ class FgModule(nn.Module):
             return torch.gather(x, dim=1, index=indices)
         
         args = transform_tensors(args, func=lambda x: gather(x, indices))
-        
+        # return the sorted latents w.r.t. z_{pres}
         return args
     
     def combine(self,
@@ -964,14 +964,14 @@ class FgModule(nn.Module):
         def _combine(x, y):
             if isinstance(x, torch.Tensor):
                 return torch.cat([x, y], dim=1)
-            else:
+            else: # combine list of torch.Tensors
                 return [_combine(*pq) for pq in zip(x, y)]
         
         state_post, state_prior, z, ids, proposal = _combine(
             [state_post_disc, state_prior_disc, z_disc, ids_disc, proposal_disc],
             [state_post_prop, state_prior_prop, z_prop, ids_prop, proposal_prop],
         )
-        z_pres = z[0]
+        z_pres = z[0] # z is concatenated Tensor of z_disc and z_prop
         state_post, state_prior, z, ids, proposal = self.select(z_pres, state_post, state_prior, z, ids, proposal)
         
         return state_post, state_prior, z, ids, proposal
@@ -1348,7 +1348,7 @@ class GlimpseDecoder(nn.Module):
         nn.Module.__init__(self)
         # Everything here is symmetric to encoder, but with subpixel upsampling
         
-        self.embed_size = ARCH.GLIMPSE_SIZE // 16
+        self.embed_size = ARCH.GLIMPSE_SIZE // 16 # 1
         self.fc = nn.Linear(ARCH.Z_WHAT_DIM, self.embed_size ** 2 * 128)
         self.net = nn.Sequential(
             nn.Conv2d(128, 64 * 2 * 2, 3, 1, 1),
@@ -1375,18 +1375,18 @@ class GlimpseDecoder(nn.Module):
         """
         
         Args:
-            z_what: (B, D)
+            z_what: (B, D), where B = batch * (#objects)
 
         Returns:
             glimpse: (B, 3, H, W)
         """
         B, D = z_what.size()
         x = F.celu(self.fc(z_what))
-        # (B, 128, E, E)
+        #  -> (B, 128, E, E)
         x = x.view(B, 128, self.embed_size, self.embed_size)
         x = self.net(x)
         x = torch.sigmoid(x)
-        # (B, 3, H, W), (B, 1, H, W)
+        # (B, 3, H, W), (B, 1, H, W), where H = W = GLIMPSE_SIZE
         o_att, alpha_att = x.split([3, 1], dim=1)
         
         return o_att, alpha_att

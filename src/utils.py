@@ -134,7 +134,7 @@ def transform_tensors(x, func):
     Returns:
         x: transformed version
     """
-    
+    # make recursion to preserve the structure of 'x'
     if isinstance(x, torch.Tensor):
         return func(x)
     elif isinstance(x, numbers.Number):
