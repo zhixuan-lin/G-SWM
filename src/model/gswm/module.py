@@ -132,15 +132,15 @@ def gaussian_kernel_2d(xy, sigma, dim):
     """
     Compute weights using a gaussian kernel
     Args:
-        xy: (*A, 2, *B)
-        sigma: float
-        dim: the dimension for which to compute the weight
+        xy: (*A, 2, *B) - matrix [B, G*G, N, 2]
+        sigma: float  - ARCH.PROP_MAP_SIGMA
+        dim: the dimension for which to compute the weight - (-1)
     Returns:
         (*A, *B)
 
     """
     # (*A, *B)
-    square_sum = (xy ** 2).sum(dim=dim)
+    square_sum = (xy ** 2).sum(dim=dim) # [B, G*G, N]
     # Kernel, (*A, *B)
     weights = 1 / (2. * math.pi * sigma ** 2) * torch.exp(
         -square_sum / (2 * sigma ** 2)

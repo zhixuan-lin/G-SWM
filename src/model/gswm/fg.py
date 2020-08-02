@@ -197,21 +197,21 @@ class FgModule(nn.Module):
         Returns:
             A dictionary. Everything will be (B, T, ...). Refer to things_t.
         """
-        B, T, C, H, W = seq.size()
+        B, T, C, H, W = seq.size() 
         #! Empty, N=0, clean states
         state_post, state_prior, z, ids = self.get_dummy_things(B, seq.device) # all params are zeros.
         start_id = torch.zeros(B, device=seq.device).long()
         
         things = defaultdict(list)
         first = True
-        for t in range(T): # track over time seq.
+        for t in range(T): # track over time seq., #! It seems like there's no dependency along the timestep.
             # (B, 3, H, W)
             x = seq[:, t] # seq is concat of image of fg masks
             # Update object states: propagate from prev step to current step
             state_post_prop, state_prior_prop, z_prop, kl_prop, proposal = self.propagate(x, state_post, state_prior, z,
                                                                                           bg[:, t])
             ids_prop = ids
-            if first or torch.rand(1) > discovery_dropout:
+            if first or torch.rand(1) > discovery_dropout: # discovery for intervention of new object
                 state_post_disc, state_prior_disc, z_disc, ids_disc, kl_disc = self.discover(x, z_prop, bg[:, t], start_id)
                 first = False
             else:
@@ -271,7 +271,7 @@ class FgModule(nn.Module):
         things = defaultdict(list)
         for t in range(T):
             
-            if t < cond_steps:
+            if t < cond_steps: # inference?
                 # Input, use posterior
                 x = seq[:, t]
                 # Tracking
@@ -314,7 +314,7 @@ class FgModule(nn.Module):
         return things
     
     def discover(self, x, z_prop, bg, start_id=0):
-        """
+        """ #! Sec A.3. of supl.
         Given current image and propagated objects, discover new objects
         Args:
             x: (B, D, H, W), current input image
@@ -325,7 +325,7 @@ class FgModule(nn.Module):
                 z_what_prop: (B, N, D)
                 z_dyna_prop: (B, N, D)
             start_id: the id to start indexing
-
+        #! authors assume independent prior for each object
         Returns:
             (h_post, c_post): (B, N, D)
             (h_prior, c_prior): (B, N, D)
@@ -347,49 +347,49 @@ class FgModule(nn.Module):
         B, *_ = x.size() #! Wow, this kinda operation was possible
         
         # (B, D, G, G)
-        x_enc = self.img_encoder(x)
+        x_enc = self.img_encoder(x) #! Conv_{disc} is implemented w/ ResNet
         # For each discovery cell, we combine propagated objects weighted by distances
         # (B, D, G, G)
-        prop_map = self.compute_prop_map(z_prop)
+        prop_map = self.compute_prop_map(z_prop) # construct 2D Gaussian kernel #! Eq.(32) of supl?
         # (B, D, G, G)
         enc = torch.cat([x_enc, prop_map], dim=1)
-        
+        #! get posteriors of latents from discovery
         (z_pres_post_prob, z_depth_post_loc, z_depth_post_scale, z_where_post_loc,
          z_where_post_scale, z_what_post_loc, z_what_post_scale, z_dyna_loc,
-         z_dyna_scale) = self.pres_depth_where_what_latent_post_disc(enc)
+         z_dyna_scale) = self.pres_depth_where_what_latent_post_disc(enc) #! Eq.(33) of supl
         
-        z_dyna_loc, z_dyna_scale = self.latent_post_disc(enc)
+        z_dyna_loc, z_dyna_scale = self.latent_post_disc(enc) #! Eq.(34) of supl
         z_dyna_post = Normal(z_dyna_loc, z_dyna_scale)
         z_dyna = z_dyna_post.rsample()
         
         # Compute posteriors. All (B, G*G, D)
         z_pres_post = RelaxedBernoulli(temperature=self.tau, probs=z_pres_post_prob)
-        z_pres = z_pres_post.rsample()
+        z_pres = z_pres_post.rsample() #! Eq.(35) of supl
         
         z_depth_post = Normal(z_depth_post_loc, z_depth_post_scale)
-        z_depth = z_depth_post.rsample()
+        z_depth = z_depth_post.rsample() #! Eq.(36) of supl
         
         z_where_post = Normal(z_where_post_loc, z_where_post_scale)
-        z_where = z_where_post.rsample()
-        z_where = self.z_where_relative_to_absolute(z_where)
+        z_where = z_where_post.rsample() #! Eq.(37) of supl
+        z_where = self.z_where_relative_to_absolute(z_where) #! Eq.(39), (40)
         
         z_what_post = Normal(z_what_post_loc, z_what_post_scale)
-        z_what = z_what_post.rsample()
+        z_what = z_what_post.rsample() #! Eq.(38) of supl
         
         # Combine
         z = (z_pres, z_depth, z_where, z_what, z_dyna)
 
         # Rejection
-        if ARCH.REJECTION:
+        if ARCH.REJECTION: # Rejection adopted from SCALOR
             z = self.rejection(z, z_prop, ARCH.REJECTION_THRESHOLD)
         
-        # Compute object ids
-        # (B, G*G) + (B, 1)
+        # Compute object ids; start_id -> id to start indexing
+        # tensor([0, 1, ..., G*G-1]) (B, G*G) + (B, 1) = (B, G*G)
         ids = torch.arange(ARCH.G ** 2, device=x_enc.device).expand(B, ARCH.G ** 2) + start_id[:, None]
         
         # Update temporal states
         state_post_prev = self.get_state_init(B, 'post')
-        state_post = self.temporal_encode(state_post_prev, z, bg, prior_or_post='post')
+        state_post = self.temporal_encode(state_post_prev, z, bg, prior_or_post='post') # get random hidden & cell state
         
         state_prior_prev = self.get_state_init(B, 'prior')
         state_prior = self.temporal_encode(state_prior_prev, z, bg, prior_or_post='prior')
@@ -618,7 +618,7 @@ class FgModule(nn.Module):
         return state_post, state_prior, z, kl, proposal
     
     def compute_prop_map(self, z_prop):
-        """
+        """ #! please refer to paragraph below Eq.(31) of supl.
         Compute a feature volume to condition discovery. The purpose is not to rediscover objects
         Args:
             z_prop:
@@ -630,7 +630,7 @@ class FgModule(nn.Module):
         Returns:
             map: (B, D, G, G). This will be concatenated with the image feature
         """
-        
+        # get the latents (pres, depth, where, what, dyna) from propagation
         z_pres_prop, z_depth_prop, z_where_prop, z_what_prop, z_dyna_prop = z_prop
         B, N, _ = z_pres_prop.size()
         
@@ -638,27 +638,27 @@ class FgModule(nn.Module):
             # First frame, empty prop map
             return torch.zeros(B, ARCH.PROP_MAP_DIM, ARCH.G, ARCH.G, device=z_pres_prop.device)
         
-        assert N == ARCH.MAX
+        assert N == ARCH.MAX # check the max # of objects in the scene
         # Use only z_what and z_depth here
         # (B, N, D)
         # TODO: I could have used relative z_where as SILOT here. But that will induce many computations. So I won't do it here.
-        z_prev = torch.cat(z_prop, dim=-1)
-        
+        z_prev = torch.cat(z_prop, dim=-1) # concat (pres, depth, where, what, dyna)
+        #! consider propagated objects to prevent the rediscovery.
         # (B, N, D) -> (B, N, D)
-        z_prev_enc = self.prop_map_mlp(z_prev)
+        z_prev_enc = self.prop_map_mlp(z_prev) # MLP^{cond} of Eq.(32)? 
         # (B, N, D), masked out objects with z_pres == 0
-        z_prev_enc = z_prev_enc * z_pres_prop
+        z_prev_enc = z_prev_enc * z_pres_prop # Update the Bernoulli probability
         
         # Compute a weight matrix of size (B, G*G, N)
         
-        # (2, G, G) -> (G*G, 2)
-        offset = self.get_offset_grid(z_prev.device)
-        offset = offset.permute(1, 2, 0).view(-1, 2)
+        # (2, G, G) -> (G, G, 2) -> (G*G, 2)
+        offset = self.get_offset_grid(z_prev.device) # grid that represents the center of z_shift of each cell
+        offset = offset.permute(1, 2, 0).view(-1, 2) 
         
-        # (B, N, 2)
+        # crop out (B, N, 2) from (B, N, 4) 
         z_shift_prop = z_where_prop[..., 2:]
         
-        # Distance matrix
+        # Distance matrix; distance btwn the prop. object and corresponding cell center.
         # (1, G*G, 1, 2)
         offset = offset[None, :, None, :]
         # (B, 1, N, 2)
@@ -667,13 +667,13 @@ class FgModule(nn.Module):
         matrix = offset - z_shift_prop
         # (B, G*G, N)
         weights = gaussian_kernel_2d(matrix, ARCH.PROP_MAP_SIGMA, dim=-1)
-        # (B, G*G, N, 1)
+        # (B, G*G, N) -> (B, G*G, N, 1)
         weights = weights[..., None]
-        # (B, 1, N, D)
+        # (B, N, D) -> (B, 1, N, D)
         z_prev_enc = z_prev_enc[:, None, ]
         
-        # (B, G*G, D)
-        prop_map = torch.sum(weights * z_prev_enc, dim=-2)
+        # (B, G*G, N, 1) * (B, 1, N, D) -> (B, G*G, N, D) -> sum -> (B, G*G, D=ARCH.PROP_MAP_DIM)
+        prop_map = torch.sum(weights * z_prev_enc, dim=-2) #! Eq.(32) of supl.
         assert prop_map.size() == (B, ARCH.G ** 2, ARCH.PROP_MAP_DIM)
         # (B, G, G, D)
         prop_map = prop_map.view(B, ARCH.G, ARCH.G, ARCH.PROP_MAP_DIM)
@@ -772,7 +772,7 @@ class FgModule(nn.Module):
         Get a grid that represents the center of z_shift of each cell
         Args:
             device: device
-
+        #! called by Gaussian kernel construction and shifting o^{where}
         Returns:
             (2, G, G), where 2 is (x, y)
         """
@@ -782,9 +782,9 @@ class FgModule(nn.Module):
             [torch.arange(ARCH.G), torch.arange(ARCH.G)])
         # (2, G, G)
         offset = torch.stack((offset_x, offset_y), dim=0).float().to(device)
-        # Scale: (0, G-1) -> (0.5, G-0.5) -> (0, 2) -> (-1, 1)
+        #! Scale: (0, G-1) -> (0.5, G-0.5) -> (0, 2) -> (-1, 1)
         offset = (2.0 / ARCH.G) * (offset + 0.5) - 1.0
-        
+        # TODO (cheolhui): make more thorough debugging here.
         return offset
     
     def z_where_relative_to_absolute(self, z_where):
@@ -804,10 +804,10 @@ class FgModule(nn.Module):
         offset = self.get_offset_grid(z_where.device)
         # scale: (-1, 1) -> (-2 / G, 2 / G). As opposed to the full range (-1, 1),
         # The maximum shift if (2 / G) / 2 = 1 / G, which is one cell
-        # (G*G, 2)
+        # (2, G, G) -> (G, G, 2) -> (G*G, 2)
         offset = offset.permute(1, 2, 0).view(GG, 2)
-        z_shift = (2.0 / ARCH.G) * torch.tanh(z_shift) + offset
-        z_scale = torch.sigmoid(z_scale)
+        z_shift = (2.0 / ARCH.G) * torch.tanh(z_shift) + offset #! Eq.(38) of supl.
+        z_scale = torch.sigmoid(z_scale) #! Eq.(39) of supl.
         
         # (B, G*G, 4)
         z_where = torch.cat([z_scale, z_shift], dim=2)
@@ -1022,8 +1022,8 @@ class FgModule(nn.Module):
         return proposal_enc
     
     def rejection(self, z_disc, z_prop, threshold):
-        """
-        If the bbox of an object overlaps too much with a propagated object, we remove it
+        """ # please refer to SCALOR paper
+        If the bbox of an object overlaps too much with a propagated object, we remove it (z_disc)
         Args:
             z_disc: discovery
             z_prop: propagation
@@ -1034,16 +1034,16 @@ class FgModule(nn.Module):
         """
         z_pres_disc, z_depth_disc, z_where_disc, z_what_disc, z_dyna_disc = z_disc
         z_pres_prop, z_depth_prop, z_where_prop, z_what_prop, z_dyna_prop = z_prop
-        # (B, N1, N2, 1)
-        iou = self.iou(z_where_disc, z_where_prop)
+        # (B, N1, N2, 1) #? what is N1 and is N2 each?
+        iou = self.iou(z_where_disc, z_where_prop) # In: [B, G*G, 4]
         assert torch.all((iou >= 0) & (iou <= 1))
-        iou_too_high = iou > threshold
+        iou_too_high = iou > threshold # torch.bool Tensors
         # Only for those that exist (B, N1, N2, 1) (B, 1, N2, 1)
         iou_too_high = iou_too_high & (z_pres_prop[:, None, :] > 0.5)
         # (B, N1, 1)
-        iou_too_high = torch.any(iou_too_high, dim=-2)
+        iou_too_high = torch.any(iou_too_high, dim=-2) # check if there's high IOU along N1 axis
         z_pres_disc_new = z_pres_disc.clone()
-        z_pres_disc_new[iou_too_high] = 0.0
+        z_pres_disc_new[iou_too_high] = 0.0 # if IOU > 0.8 and p(z_pres) > 0.5, reject z_disc
         
         return (z_pres_disc_new, z_depth_disc, z_where_disc, z_what_disc, z_dyna_disc)
         
@@ -1051,23 +1051,23 @@ class FgModule(nn.Module):
         """
         
         Args:
-            z_where_disc: (B, N1, 4)
+            z_where_disc: (B, N1, 4) -> N1 : G*G
             z_where_prop: (B, N2, 4)
-
+        #! NOTE that z_{where} is split into z^{hw} and z^{xy}
         Returns:
             (B, N1, N2)
         """
-        B, N1, _ = z_where_disc.size()
-        B, N2, _ = z_where_prop.size()
-        def _get_edges(z_where):
-            z_where = z_where.detach().clone()
-            z_where[..., 2:] = (z_where[..., 2:] + 1) / 2
+        B, N1, _ = z_where_disc.size() #? N1: What does this mean?
+        B, N2, _ = z_where_prop.size() #? N2: 
+        def _get_edges(z_where): # edges in the image space [0,1] & [0,1]
+            z_where = z_where.detach().clone() # we dont' change the original variable
+            z_where[..., 2:] = (z_where[..., 2:] + 1) / 2 # relocate X & Y [-1, 1] -> [0, 1]
             # (B, N, 1), (B, N, 1), (B, N, 1), (B, N, 1)
             sx, sy, cx, cy = torch.split(z_where, [1, 1, 1, 1], dim=-1)
-            left = cx - sx / 2
-            right = cx + sx / 2
-            top = cy - sy / 2
-            bottom = cy + sy / 2
+            left = cx - sx / 2 # x - 2/w
+            right = cx + sx / 2 # x + 2/w
+            top = cy - sy / 2 # x - 2/h 
+            bottom = cy + sy / 2 # x + 2/h
             return left, right, top, bottom
             
         def _area(left, right, top, bottom):

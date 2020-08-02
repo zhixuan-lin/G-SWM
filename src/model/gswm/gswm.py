@@ -112,7 +112,7 @@ class GSWM(nn.Module):
         # Process foreground
         seq_diff = seq - bg_things['bg'] # [B, T, C, H, W] - [B, T, C, H, W] #? masked foreground?
         # (B, T, >C<, H, W)
-        inpt = torch.cat([seq, seq_diff], dim=2) #? concat along channel axis, why? ; [B, T, 6, H, W]
+        inpt = torch.cat([seq, seq_diff], dim=2) #! Input of Eq.(31) of supl. concat along channel axis ; [B, T, 6, H, W]
         fg_things = self.fg_module.track(inpt, bg_things['bg'], discovery_dropout=discovery_dropout)
     
         # Prepares things to compute reconstruction
