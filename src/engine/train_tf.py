@@ -1,4 +1,5 @@
 import torch
+import tensorflow as tf
 GPU_NUM = 5 
 device = torch.device(f'cuda:{GPU_NUM}' if torch.cuda.is_available() else 'cpu')
 torch.cuda.set_device(device) # change allocation of current GPU
@@ -8,17 +9,16 @@ import sys
 
 if '.' not in sys.path:
     sys.path.insert(0, '.')
-import torch
 import numpy as np
 
 # Seed
 
 import os
 import time
-from torch.nn.utils import clip_grad_norm_
-from torch.utils.tensorboard import SummaryWriter
-from utils import MetricLogger, Checkpointer
-from dataset import get_dataloader, get_dataset
+from torch.nn.utils import clip_grad_norm_ # TODO: tf.clip_by_norm
+from torch.utils.tensorboard import SummaryWriter # TODO: summary_writer = tf.compat.v2.summary.create_file_writer
+from utils import MetricLogger, Checkpointer # TODO: use those inside TILDE
+from dataset import get_dataloader, get_dataset 
 from model import get_model
 from solver import get_optimizer
 from torch import nn
@@ -90,12 +90,12 @@ def train(cfg):
     for epoch in range(start_epoch, cfg.train.max_epochs): # @ config
         if end_flag: break
         start = time.perf_counter()
-        for i, data in enumerate(trainloader): # TODO (cheolhui): add motion data here.
+        for i, data in enumerate(trainloader): #! 'where we '_getitem_'.
             end = time.perf_counter()
             data_time = end - start
             start = end
             imgs, *_ = [d.to(cfg.device) for d in data]
-            model.train() 
+            model.train() # TODO(cheolhui): debug this; change mode of Torch model.
             loss, log = model(imgs, global_step) # In: imgs [B, T, 3, dim, dim]
             # If you are using DataParallel
             loss = loss.mean()

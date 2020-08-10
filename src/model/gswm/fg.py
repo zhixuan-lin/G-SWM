@@ -535,10 +535,10 @@ class FgModule(nn.Module):
         proposal_offset = self.pred_proposal(h_post) #! Eq.(18) of supl., by posterior OS-RNN; h_{hat}_{t-1}^k
         proposal = torch.zeros_like(z_where_prev) # [B, N, 4]
         # Update size only; extract proposal region of the image, centered @ the prev. obj. location o_{t-1}^{xy,k} 
-        proposal[..., 2:] = z_where_prev[..., 2:]
-        proposal[..., :2] = z_where_prev[..., :2] + ARCH.PROPOSAL_UPDATE_MIN + ( #! Eq.(19) of supl.
+        proposal[..., 2:] = z_where_prev[..., 2:] # (x,y)
+        proposal[..., :2] = z_where_prev[..., :2] + ARCH.PROPOSAL_UPDATE_MIN + ( #! Eq.(19) of supl., (h,w)
                 ARCH.PROPOSAL_UPDATE_MAX - ARCH.PROPOSAL_UPDATE_MIN) * torch.sigmoid(proposal_offset)
-        
+        # proposal_offset -> (0,1) ->  relocate & rescale to (0.1, 0.3)
         # Get proposal glimpses
         # (B*N, 3, H, W) ->
         x_repeat = torch.repeat_interleave(x[:, :3], N, dim=0) # crop-out the first three channel.
@@ -592,7 +592,7 @@ class FgModule(nn.Module):
         state_post = self.temporal_encode(state_post_prev, z, bg, prior_or_post='post')
         state_prior = self.temporal_encode(state_prior_prev, z, bg, prior_or_post='prior')
         
-        z_dyna_loc, z_dyna_scale = self.latent_prior_prop(h_prior) #! Eq(11) of supl.
+        z_dyna_loc, z_dyna_scale = self.latent_prior_prop(h_prior) #! Eq(23) of supl.
         z_dyna_prior = Normal(z_dyna_loc, z_dyna_scale)
         kl_dyna = kl_divergence(z_dyna_post, z_dyna_prior) #! we get post & prior z_{dyna} from each Eq.(23) and Eq.(12)
         
@@ -604,7 +604,7 @@ class FgModule(nn.Module):
         
         # Reduced to (B,)
         
-        #! Sec. 3.4.2, Eq.(10) of paper; Again, this is not really kl
+        #! Sec. 3.4.2 of paper; Again, this is not really kl
         kl_pres = kl_pres.flatten(start_dim=1).sum(-1)
         kl_dyna = kl_dyna.flatten(start_dim=1).sum(-1)
         
@@ -784,7 +784,6 @@ class FgModule(nn.Module):
         offset = torch.stack((offset_x, offset_y), dim=0).float().to(device)
         #! Scale: (0, G-1) -> (0.5, G-0.5) -> (0, 2) -> (-1, 1)
         offset = (2.0 / ARCH.G) * (offset + 0.5) - 1.0
-        # TODO (cheolhui): make more thorough debugging here.
         return offset
     
     def z_where_relative_to_absolute(self, z_where):

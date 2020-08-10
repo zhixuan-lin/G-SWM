@@ -85,7 +85,7 @@ class GSWM(nn.Module):
         loglikelihood = self.gaussian_likelihood(seq, fg, bg, alpha_map, global_step)
     
         kl = kl_bg if (ARCH.BG_ON and global_step < ARCH.BG_ONLY_STEP) else kl_bg + kl_fg
-    
+        # maximize elbo: maximize loglikelihood and minimize kl divergence
         elbo = loglikelihood - kl
     
         # Visualization
@@ -126,7 +126,7 @@ class GSWM(nn.Module):
         log.update(
             imgs=seq,
             recon=fg + (1 - alpha_map) * bg,
-        )
+        ) #! Eq.(50) of supl.
     
         return log
     
@@ -158,7 +158,7 @@ class GSWM(nn.Module):
         else:
             recon = fg + (1. - alpha_map) * bg
             
-        dist = Normal(recon, self.sigma)
+        dist = Normal(recon, self.sigma) #! Eq.(50) of supl.
         # (B, T, 3, H, W)
         loglikelihood = dist.log_prob(x)
         # (B,)

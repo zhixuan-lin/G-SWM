@@ -1,5 +1,5 @@
 import os.path as osp
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader # TODO tf.data.Dataset
 
 __all__ = ['get_dataset', 'get_dataloader']
 
@@ -44,3 +44,18 @@ def get_dataloader(cfg, mode):
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
     
     return dataloader
+
+def get_tf_dataset(cfg, mode):
+    """ Get the TensorFlow dataset.
+    """
+    assert mode in ['train', 'val', 'test']
+    
+    batch_size = getattr(cfg, mode).batch_size
+    shuffle = True if mode == 'train' else False
+    num_workers = getattr(cfg, mode).num_workers
+    
+    dataset = get_dataset(cfg, mode)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
+    
+    return dataloader
+
