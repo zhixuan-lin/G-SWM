@@ -231,7 +231,7 @@ class GSWMVis:
         dataloader = DataLoader(dataset, batch_size=len(dataset), shuffle=False)
         # Do not use multiple GPUs
         # (B, T, 3, H, W)
-        data = next(iter(dataloader))
+        data = next(iter(dataloader)) #! create data generator
         data = [d.to(device) for d in data]
         data, *_ = data
         return data

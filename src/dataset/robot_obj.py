@@ -55,55 +55,69 @@ class RobotObj(Dataset):
                 ep_len += 1
                 dir_name = os.path.join(self.root, 'variation' + str(v), 'episodes', 'episode' + str(f)) # '../data/robot_obj/val/0'
                 paths = list(glob.glob(osp.join(dir_name, 'left_shoulder_rgb', '*.png')))
-                ld_pkl_path = osp.joint(dir_name, 'low_dim_obs.pkl')
-                self.get_low_dim_robot_data(ld_pkl_path)
-                if len(paths) < 70: #! ignore imperfect demos
+                ld_pkl_path = osp.join(dir_name, 'low_dim_obs.pkl')
+                if len(paths) < 100: #! ignore imperfect demos
                     continue
+                lds = self.get_low_dim_robot_data(ld_pkl_path)
                 # if len(paths) != self.EP_LEN:
                 #     continue
                 # assert len(paths) == self.EP_LEN, 'len(paths): {}'.format(len(paths))
                 get_num = lambda x: int(osp.splitext(osp.basename(x))[0].partition('_')[0])
 
                 paths.sort(key=get_num) # soft the file names...
-                paths = paths[58:] # crop out first 60 episodes 
+                paths = paths[71:] # crop out first 60 episodes 
+                lds = lds[71:] # crop out first 60 episodes 
                 self.episodes.append(paths) # append lists 
-                self.low_dims = []
+                self.low_dims.append(lds)
+                assert len(self.episodes) == len(self.low_dims)
             
     
     def __getitem__(self, index):
         
         # TODO (cheolhui): return the low-dim data here
         imgs = []
+        ee_poses = []
         if self.mode == 'train':
-            # Implement continuous indexing
-            ep = index // self.seq_per_episode
-            offset = index % self.seq_per_episode
-            end = offset + self.sample_length
-            
+            # Implement continuous indexing (all episodes are concatenated as one list)
+            ep = index // self.seq_per_episode # start index of episode
+            offset = index % self.seq_per_episode # start_seq idx of each episode 
+            end = offset + self.sample_length # end_seq idx of each epsiode, maximum of episode length
+            # always less than the epi len, since 
+            # 
             e = self.episodes[ep]
+            ld = self.low_dims[ep] #! low-dim data should NOT be cropped
+            if len(e) < 30:
+                raise ValueError("Stops Here!")
             for image_index in range(offset, end):
                 img = Image.open(osp.join(e[image_index]))
                 img = img.resize((64, 64))
                 img = transforms.ToTensor()(img)[:3]
                 imgs.append(img)
-        else:
+                ee_pose = torch.from_numpy(ld[image_index].gripper_pose)
+                ee_poses.append(ee_pose)
+            #! crop-out ld
+        else: # validate for arbitrary sample
             for path in self.episodes[index]:
                 img = Image.open(path)
                 img = img.resize((64, 64))
                 img = transforms.ToTensor()(img)[:3]
                 imgs.append(img)
-                
+            # TODO (cheolhui): debug the output shape of ee_poses
+            for ld in self.low_dims[index]:
+                ee_pose = torch.from_numpy(ld.gripper_pose)
+                ee_poses.append(ee_pose)
         
         img = torch.stack(imgs, dim=0).float()
+        ee_pose = torch.stack(ee_poses, dim=0).float()
         pos = torch.zeros(0)
         size = torch.zeros(0)
         id = torch.zeros(0)
         in_camera = torch.zeros(0)
         
-        return img, pos, size, id, in_camera
+        return img, ee_pose, pos, size, id, in_camera
     
     def __len__(self):
-        length = len(self.epsisodes)
+        length = len(self.episodes)
         if self.mode == 'train':
             return length * self.seq_per_episode
         else:
@@ -112,6 +126,6 @@ class RobotObj(Dataset):
     def get_low_dim_robot_data(self, low_dim_path):
         # return low-dimensional data of robot
         with open(low_dim_path, 'rb') as f:
-            obs = pickle.load(f) # AttrDict
+            obs = pickle.load(f) # llist of AttrDict
         return obs
 

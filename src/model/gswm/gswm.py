@@ -10,7 +10,7 @@ from .arch import ARCH
 from .bg import BgModule
 from .fg import FgModule
 from .fg_deter import FgModuleDeter
-
+from attrdict import AttrDict
 
 class GSWM(nn.Module):
     def __init__(self):
@@ -55,11 +55,12 @@ class GSWM(nn.Module):
     
     
 
-    def forward(self, seq, global_step):
+    def forward(self, seq, ee_poses, global_step):
         """
 
         Args:
             seq: (B, T, 3, H, W)
+            ee_poses: (B, T) - shape of end-effector poses
             global_step: global training step
 
         Returns:

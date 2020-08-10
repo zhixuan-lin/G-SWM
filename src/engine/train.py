@@ -94,9 +94,9 @@ def train(cfg):
             end = time.perf_counter()
             data_time = end - start
             start = end
-            imgs, *_ = [d.to(cfg.device) for d in data]
-            model.train() 
-            loss, log = model(imgs, global_step) # In: imgs [B, T, 3, dim, dim]
+            imgs, ee_poses, *_ = [d.to(cfg.device) if isinstance(d, torch.Tensor) else d for d in data]
+            model.train() # TODO (cheolhui): np.arrays in low_dims should be converted to CUDA tensors
+            loss, log = model(imgs, ee_poses, global_step) # In: imgs [B, T, 3, dim, dim]
             # If you are using DataParallel
             loss = loss.mean()
             optimizer.zero_grad()

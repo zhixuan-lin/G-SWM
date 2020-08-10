@@ -16,8 +16,9 @@ dataset: 'ROBOT_OBJ'
 
 dataset_roots:
   # ROBOT_OBJ: '../data/robot_obj'
-  ROBOT_OBJ: '../data/rob_obj_inter_base_view'
-  ROBOT_OBJ: '../data/rob_obj_inter_base_view_colored'
+  # ROBOT_OBJ: '../data/rob_obj_inter_base_view'
+  # ROBOT_OBJ: '../data/rob_obj_inter_base_view_colored'
+  ROBOT_OBJ: '../data/rob_obj_action'
 
 solver:
   optim: 'Adam'
