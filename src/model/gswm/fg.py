@@ -794,8 +794,9 @@ class FgModule(nn.Module):
         # Update states via RNN; In: state_*_prev - hidden & cell state of RNN, z - tuple of z_att and z_dyna 
         state_post = self.temporal_encode(state_post_prev, z, bg, prior_or_post='post')
         state_prior = self.temporal_encode(state_prior_prev, z, bg, prior_or_post='prior')
-        
-        z_dyna_loc, z_dyna_scale = self.latent_prior_prop(h_prior) #! Eq(23) of supl.
+        # TODO (cheolhui): condition action for the prior.        
+        # z_dyna_loc, z_dyna_scale = self.latent_prior_prop(h_prior) #! Eq(23) of supl.
+        z_dyna_loc, z_dyna_scale = self.latent_prior_prop.forward_action(h_prior, ee) #! Eq(23) of supl.
         z_dyna_prior = Normal(z_dyna_loc, z_dyna_scale)
         kl_dyna = kl_divergence(z_dyna_post, z_dyna_prior) #! we get post & prior z_{dyna} from each Eq.(23) and Eq.(12)
         
@@ -1456,6 +1457,29 @@ class LatentPriorProp(nn.Module):
         B = x.size(0)
         params = self.enc(x)
         # (B, G*G, D)
+        (z_dyna_loc, z_dyna_scale) = torch.chunk(params, chunks=2, dim=-1)
+        z_dyna_scale = F.softplus(z_dyna_scale) + 1e-4 #!Eq.(12) of supl
+        
+        return z_dyna_loc, z_dyna_scale
+
+    def forward_action(self, x, ee):
+        """
+        Args:
+            x: (B, N, D)
+            ee: (B, P)
+        Returns:
+            z_dyna_loc, z_dyna_scale: (B, 1, G, G)
+        """
+        B, N, *_ = x.size()
+        params = []
+        for n in range(N):
+            if n == 0:
+                param = self.act_enc(torch.cat([x[:, n, ...], ee], dim=-1)) # In: [B, 2D], Out: [B, D]
+            else:
+                param = self.enc(x[:, n, ...]) # [B, 2D], Out: [B, D]
+            params.append(param)        # (B, G*G, D)
+        params = torch.stack(params, dim=1) # [B, N, D]
+
         (z_dyna_loc, z_dyna_scale) = torch.chunk(params, chunks=2, dim=-1)
         z_dyna_scale = F.softplus(z_dyna_scale) + 1e-4 #!Eq.(12) of supl
         
