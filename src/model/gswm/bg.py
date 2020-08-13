@@ -117,6 +117,98 @@ class BgModule(nn.Module):
             z_ctx = z_ctx_post.rsample() #! Eq.(7) of supl.
             
             # Compute prior
+            params = self.prior_net(h_prior) #!. Eq(2) of supl.
+            loc, scale = torch.chunk(params, 2, dim=-1)
+            scale = F.softplus(scale) + 1e-4
+            z_ctx_prior = Normal(loc, scale) #! Eq.(3) of supl.
+            
+            # Temporal encode #! encode along the time axes1 -> generate context prior and posterior
+            h_post, c_post = self.rnn_post(z_ctx, (h_post, c_post)) #! Eq.(4) of supl.
+            h_prior, c_prior = self.rnn_prior(z_ctx, (h_prior, c_prior)) #! Eq.(1) of supl.
+            
+            # Compute KL Divergence
+            # (B, D)
+            kl = kl_divergence(z_ctx_post, z_ctx_prior) # measure the dist btwn ctx prior and posterior
+            assert kl.size()[-1] == ARCH.Z_CTX_DIM
+            
+            # Accumulate things
+            z_ctx_list.append(z_ctx)
+            kl_list.append(kl.sum(-1))
+        
+        # (B, T, D) -> (B*T, D)
+        z_ctx = torch.stack(z_ctx_list, dim=1) # (B, T, D)
+        z_ctx = z_ctx.view(B * T, ARCH.Z_CTX_DIM) # (B*T, D)
+        # Before that, let's render our background # TODO (cheolhui): figure out what forces the seperation of fg and bg.
+        # (B*T, 3, H, W)
+        bg = self.dec( #! Eq.(41) of supl. decode from z_ctx_{post}
+            # z_ctx
+            self.dec_fc(z_ctx).
+                view(B * T, 128, self.embed_size, self.embed_size)
+        )
+        # Reshape
+        bg = bg.view(B, T, 3, H, W) # (B, T, 3, H, W)
+
+        z_ctx = z_ctx.view(B, T, ARCH.Z_CTX_DIM) # (B*T, Z_CTX_DIM) -> (B, T, Z_CTX_DIM)
+        # (B, T)
+        kl_bg = torch.stack(kl_list, dim=1) # len T ist of [B,] -> [B, T]
+        assert kl_bg.size() == (B, T)
+        
+        things = dict(
+            bg=bg,  # (B, T, 3, H, W)
+            z_ctx=z_ctx,  # (B, T, D), where D = Z_CTX_DIM
+            kl_bg=kl_bg,  # (B, T)
+        )
+        
+        return things
+
+    def encode_rob_bg(self, seq):
+        """
+        Encode input frames into context latents, conditioned on end-effector / joint values
+        Args:
+            seq: (B, T, 3, H, W)
+
+        Returns:
+            things:
+                bg: (B, T, 3, H, W)
+                kl: (B, T)
+        """
+        # (B, T, 3, H, W)
+        B, T, C, H, W = seq.size()
+        
+        # Encode images
+        # (B*T, C, H, W)
+        enc = self.enc(seq.reshape(B * T, 3, H, W)) #! Eq.(5) of supl.
+        # I deliberately do this ugly thing because for future version we may need enc to do bg interaction
+        # (B*T, D) #! flatten, no convolution?
+        enc = enc.flatten(start_dim=1)
+        # (B*T, D)
+        enc = self.enc_fc(enc) #! Eq.(5) of supl.
+        # (B, T, D)
+        enc = enc.view(B, T, ARCH.IMG_ENC_DIM) # 
+        
+        h_post = self.h_init_post.expand(B, ARCH.RNN_CTX_HIDDEN_DIM) # random init nn_params: shape - [B, H]
+        c_post = self.c_init_post.expand(B, ARCH.RNN_CTX_HIDDEN_DIM) # random init nn_params: shape - [B, H]
+        h_prior = self.h_init_prior.expand(B, ARCH.RNN_CTX_HIDDEN_DIM) # random init nn_params: shape - [B, H]
+        c_prior = self.c_init_prior.expand(B, ARCH.RNN_CTX_HIDDEN_DIM) # random init nn_params: shape - [B, H]
+        
+        # (B,)
+        kl_list = []
+        z_ctx_list = []
+        for t in range(T): # first start with random noise of parameters (hidden state + cell_state)
+            # Compute posterior
+            # (B, D)
+            post_input = torch.cat([h_post, enc[:, t]], dim=-1) 
+            # (B, D), (B, D)
+            params = self.post_net(post_input) #! Eq.(6) of supl.
+            # (B, D), (B, D)
+            loc, scale = torch.chunk(params, 2, dim=-1) #! Eq.(6) of supl.
+            scale = F.softplus(scale) + 1e-4
+            # (B, D)
+            z_ctx_post = Normal(loc, scale) #! Eq.(7 ) of supl.
+            # (B*T, D)
+            z_ctx = z_ctx_post.rsample() #! Eq.(7) of supl.
+            
+            # Compute prior
             params = self.prior_net(h_prior)
             loc, scale = torch.chunk(params, 2, dim=-1) #! Eq.(6) of supl.
             scale = F.softplus(scale) + 1e-4

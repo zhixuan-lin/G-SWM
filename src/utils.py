@@ -110,18 +110,18 @@ def spatial_transform(image, z_where, out_dims, inverse=False):
     R = [[s, 0],  ->  R_inv = [[1/s, 0],
          [0, s]]               [0, 1/s]]
     """
-    # 1. construct 2x3 affine matrix for each datapoint in the minibatch
+    # 1. construct 2x3 affine matrix for each datapoint in the minibatch: [2, 3] -> [B*N, 2, 3]
     theta = torch.zeros(2, 3, device=image.device).repeat(image.shape[0], 1, 1) #! like tf.tile
     # set scaling -> [[s, 0], [0, s]]
-    theta[:, 0, 0] = z_where[:, 0] if not inverse else 1 / (z_where[:, 0] + 1e-9) # [B*N]
-    theta[:, 1, 1] = z_where[:, 1] if not inverse else 1 / (z_where[:, 1] + 1e-9) # [B*N]
+    theta[:, 0, 0] = z_where[:, 0] if not inverse else 1 / (z_where[:, 0] + 1e-9) # [B*N] 'h'
+    theta[:, 1, 1] = z_where[:, 1] if not inverse else 1 / (z_where[:, 1] + 1e-9) # [B*N] 'w'
     
     # set translation @ the last column [..., -1]
-    theta[:, 0, -1] = z_where[:, 2] if not inverse else - z_where[:, 2] / (z_where[:, 0] + 1e-9)
-    theta[:, 1, -1] = z_where[:, 3] if not inverse else - z_where[:, 3] / (z_where[:, 1] + 1e-9)
+    theta[:, 0, -1] = z_where[:, 2] if not inverse else - z_where[:, 2] / (z_where[:, 0] + 1e-9) # 'x'
+    theta[:, 1, -1] = z_where[:, 3] if not inverse else - z_where[:, 3] / (z_where[:, 1] + 1e-9) # 'y'
     # 2. construct sampling grid: In: theta of shape [B*N, 2, 3]
-    grid = F.affine_grid(theta, torch.Size(out_dims)) # out_dims target_output_image
-    # 3. sample image from grid
+    grid = F.affine_grid(theta, torch.Size(out_dims)) # generates a 2D flow field (sampling grid), given a batch of affine matrices theta.
+    # 3. sample image from grid of shape [B*N, 3, H, W]
     return F.grid_sample(image, grid)
 
 def transform_tensors(x, func):

@@ -64,6 +64,8 @@ ARCH.RNN_INPUT_DIM = 128
 ARCH.RNN_HIDDEN_DIM = 128
 # Background rnn hidden dimension
 ARCH.RNN_CTX_HIDDEN_DIM = 128
+# Action dimension (robot variables)
+ARCH.ACTION_DIM = 7
 
 # Temperature for gumbel-softmax
 ARCH.TAU_START_STEP = 0

@@ -32,7 +32,8 @@ class FgModule(nn.Module):
         self.pred_proposal = PredProposal()
         self.glimpse_decoder = GlimpseDecoder()
         self.latent_post_disc = LatentPostDisc()
-        self.latent_post_prop = LatentPostProp()
+        # self.latent_post_prop = LatentPostProp()
+        self.latent_post_prop_action = LatentPostProp()
         self.latent_prior_prop = LatentPriorProp()
         self.pres_depth_where_what_prior = PresDepthWhereWhatPrior()
         #TODO: the latent part is not used. I put it here so we can load old checkpoints
@@ -250,6 +251,75 @@ class FgModule(nn.Module):
         
         things = {k: torch.stack(v, dim=1) for k, v in things.items()}
         return things
+
+    def track_rob_fg(self, seq, ee_poses, bg, discovery_dropout):
+            """
+            Doing tracking robot as a foreground, requires conditioning robot variables
+            Args:
+                seq: (B, T, C, H, W)
+                ee_poses: [B, T, P]
+                bg: (B, T, C, H, W)
+                discovery_dropout: (0, 1)
+
+            Returns:
+                A dictionary. Everything will be (B, T, ...). Refer to things_t.
+            """
+            B, T, C, H, W = seq.size() 
+            #! Empty, N=0, clean states
+            state_post, state_prior, z, ids = self.get_dummy_things(B, seq.device) # all params are zeros.
+            start_id = torch.zeros(B, device=seq.device).long() # TODO (cheolhui): Figure out what 'id' does.
+            
+            things = defaultdict(list)
+            first = True
+            for t in range(T): # track over time seq., #! It seems like there's no dependency along the timestep.
+                # (B, 3, H, W)
+                x = seq[:, t] # seq is concat of image of fg masks
+                ee = ee_poses[:, t]
+                # Update object states: propagate from prev step to current step
+                # state_post_prop, state_prior_prop, z_prop, kl_prop, proposal = self.propagate(x, state_post, state_prior, z,
+                #                                                                             bg[:, t])
+                state_post_prop, state_prior_prop, z_prop, kl_prop, proposal = self.propagate_rob_fg(x, ee, state_post, state_prior, z,
+                                                                                            bg[:, t])
+                ids_prop = ids
+                if first or torch.rand(1) > discovery_dropout: # discovery for intervention of new object
+                    state_post_disc, state_prior_disc, z_disc, ids_disc, kl_disc = self.discover(x, z_prop, bg[:, t], start_id)
+                    first = False
+                else: # Do not conduct discovery
+                    state_post_disc, state_prior_disc, z_disc, ids_disc = self.get_dummy_things(B, seq.device)
+                    kl_disc = (0.0, 0.0, 0.0, 0.0, 0.0)
+                
+                # TODO: for proposal of discovery, we are just using z_where
+                #! Combine discovered and propagated things, and sort by p(z_pres)
+                state_post, state_prior, z, ids, proposal = self.combine(
+                    state_post_disc, state_prior_disc, z_disc, ids_disc, z_disc[2],
+                    state_post_prop, state_prior_prop, z_prop, ids_prop, proposal
+                )
+                kl = [x + y for (x, y) in zip(kl_prop, kl_disc)] # make a paired list of kl-divergences
+                fg, alpha_map = self.render(z)
+                start_id = ids.max(dim=1)[0] + 1
+                
+                things_t = dict(
+                    z_pres=z[0],  # (B, N, 1)
+                    z_depth=z[1],  # (B, N, 1)
+                    z_where=z[2],  # (B, N, 4)
+                    z_what=z[3],  # (B, N, D)
+                    z_dyna=z[4],  # (B, N, D)
+                    kl_pres=kl[0],  # (B,)
+                    kl_depth=kl[1],  # (B,)
+                    kl_where=kl[2],  # (B,)
+                    kl_what=kl[3],  # (B,)
+                    kl_dyna=kl[4],  # (B,)
+                    kl_fg=kl[0] + kl[1] + kl[2] + kl[3] + kl[4],  # (B,)
+                    ids=ids,  # (B, N)
+                    fg=fg,  # (B, C, H, W)
+                    proposal=proposal,  # (B, N, 4)
+                    alpha_map=alpha_map  # (B, 1, H, W)
+                )
+                for key in things_t:
+                    things[key].append(things_t[key])
+            
+            things = {k: torch.stack(v, dim=1) for k, v in things.items()}
+            return things
     
     def generate(self, seq, bg, cond_steps, sample):
         """
@@ -448,7 +518,7 @@ class FgModule(nn.Module):
         z_pres_prev, z_depth_prev, z_where_prev, z_what_prev, z_dyna_prev = z_prev
         
         # (B, N, D)
-        
+        #! latent size of z_dyna is 128 (default)
         z_dyna_loc, z_dyna_scale = self.latent_prior_prop(state_prev[0])
         z_dyna_prior = Normal(z_dyna_loc, z_dyna_scale)
         z_dyna = z_dyna_prior.sample() if sample else z_dyna_loc
@@ -507,9 +577,9 @@ class FgModule(nn.Module):
             h_post, c_post: (B, N, D)
             h_prior, c_prior: (B, N, D)
             z:
-                z_pres: (B, N, 1)
-                z_depth: (B, N, 1)
-                z_where: (B, N, 4)
+                z_pres: (B, N, 1) #! explicit
+                z_depth: (B, N, 1) #! explicit
+                z_where: (B, N, 4) #! explicit
                 z_what: (B, N, D)
                 z_dyna: (B, N, D)
             kl:
@@ -524,24 +594,25 @@ class FgModule(nn.Module):
         z_pres_prev, z_depth_prev, z_where_prev, z_what_prev, z_dyna_prev = z_prev
         B, N, _ = z_pres_prev.size()
         
-        if N == 0: # num of entities.
+        if N == 0: # num of entities. zero if nothing has been discovered before
             # No object is propagated -> then do discovery
             return state_post_prev, state_prior_prev, z_prev, (0.0, 0.0, 0.0, 0.0, 0.0), z_prev[2]
         
-        h_post, c_post = state_post_prev # [B, N, 128], [B, N, 128]
+        h_post, c_post = state_post_prev # [B, N, 128], [B, N, 128] # NOTE that h_post is inferred by Eq.(18)
         h_prior, c_prior = state_prior_prev # [B, N, 128], [B, N, 128]
         #! 1) Inference procedure of "propagate": Sec A.2 of supl.
         # Predict proposal locations, (B, N, 2)
-        proposal_offset = self.pred_proposal(h_post) #! Eq.(18) of supl., by posterior OS-RNN; h_{hat}_{t-1}^k
-        proposal = torch.zeros_like(z_where_prev) # [B, N, 4]
+        proposal_offset = self.pred_proposal(h_post) #! Eq.(19) of supl., by posterior OS-RNN; h_{hat}_{t-1}^k
+        proposal = torch.zeros_like(z_where_prev) # [B, N, 4] -> size of proposal area
         # Update size only; extract proposal region of the image, centered @ the prev. obj. location o_{t-1}^{xy,k} 
-        proposal[..., 2:] = z_where_prev[..., 2:] # (x,y)
-        proposal[..., :2] = z_where_prev[..., :2] + ARCH.PROPOSAL_UPDATE_MIN + ( #! Eq.(19) of supl., (h,w)
-                ARCH.PROPOSAL_UPDATE_MAX - ARCH.PROPOSAL_UPDATE_MIN) * torch.sigmoid(proposal_offset)
+        proposal[..., 2:] = z_where_prev[..., 2:] # o^{xy} - (x,y)
+        proposal[..., :2] = z_where_prev[..., :2] + ARCH.PROPOSAL_UPDATE_MIN + ( #! o^{hw}; Eq.(19) of supl., (h,w)
+            ARCH.PROPOSAL_UPDATE_MAX - ARCH.PROPOSAL_UPDATE_MIN) * torch.sigmoid(proposal_offset)
         # proposal_offset -> (0,1) ->  relocate & rescale to (0.1, 0.3)
         # Get proposal glimpses
-        # (B*N, 3, H, W) ->
+        # x_repeat: (B*N, 3, H, W)
         x_repeat = torch.repeat_interleave(x[:, :3], N, dim=0) # crop-out the first three channel.
+        # if N = 5 & batch is a, b, ..., : aaaaabbbbbccccc ... # if torch.repeat ab...ab...ab...ab...ab...
         #! arch.glimpse_shape = [16, 16]
         # (B*N, 3, H, W) #! Eq.(4) of paper
         proposal_glimpses = spatial_transform(image=x_repeat, z_where=proposal.view(B * N, 4), #! Eq.(20) of supl.
@@ -551,16 +622,148 @@ class FgModule(nn.Module):
         # (B, N, D)
         proposal_enc = self.proposal_encoder(proposal_glimpses) #! Eq.(21) of supl.
         # (B, N, D)
-        # This will be used to condition everything
+        # This will be used to condition everything: # TODO (cheolhui): condition action here!
         enc = torch.cat([proposal_enc, h_post], dim=-1) # [B, N, D] + [B, N, D] = [B, N, 2D] 
         
         z_dyna_loc, z_dyna_scale = self.latent_post_prop(enc) #! Eq.(22) of supl.
         z_dyna_post = Normal(z_dyna_loc, z_dyna_scale)
         z_dyna = z_dyna_post.rsample() #! Eq.(23) of supl.
         # given dynamics latent (z_{dyna}) from posterior (z_dyna_post), the attribute latents are computed as follows
-        # (B, N, D)
+        #! {pres, depth, where, what} are inferred from z_dyna  (B, N, D)
         (z_pres_prob, z_depth_offset_loc, z_depth_offset_scale, z_where_offset_loc, #! Eq.(13) of supl.
-         z_where_offset_scale, z_what_offset_loc, z_what_offset_scale,
+         z_where_offset_scale, z_what_offset_loc, z_what_offset_scale, 
+         z_depth_gate, z_where_gate, z_what_gate) = self.pres_depth_where_what_prior(z_dyna)
+        
+        # Sampling
+        z_pres_post = RelaxedBernoulli(self.tau, probs=z_pres_prob)  #! Eq.(14) of supl.
+        z_pres = z_pres_post.rsample()
+        z_pres = z_pres_prev * z_pres # -> refer to Sec 2.5 of PRML
+        
+        z_where_post = Normal(z_where_offset_loc, z_where_offset_scale)
+        z_where_offset = z_where_post.rsample()  #! Eq.(16) of supl.
+        z_where = torch.zeros_like(z_where_prev)
+        # Scale; [B, N, 4] -> [B, N, 2] (mean), [B, N, 2] (shift). 
+        z_where[..., :2] = z_where_prev[..., :2] + ARCH.Z_SCALE_UPDATE_SCALE * z_where_gate[..., :2] * torch.tanh(
+            z_where_offset[..., :2])
+        # Shift
+        z_where[..., 2:] = z_where_prev[..., 2:] + ARCH.Z_SHIFT_UPDATE_SCALE * z_where_gate[..., 2:] * torch.tanh(
+            z_where_offset[..., 2:])
+        
+        z_depth_post = Normal(z_depth_offset_loc, z_depth_offset_scale)
+        z_depth_offset = z_depth_post.rsample()  #! Eq.(15) of supl.
+        z_depth = z_depth_prev + ARCH.Z_DEPTH_UPDATE_SCALE * z_depth_gate * z_depth_offset # [B, D, 1]
+        
+        z_what_post = Normal(z_what_offset_loc, z_what_offset_scale)
+        z_what_offset = z_what_post.rsample()  #! Eq.(17) of supl.
+        z_what = z_what_prev + ARCH.Z_WHAT_UPDATE_SCALE * z_what_gate * torch.tanh(z_what_offset) # [B, D, 64]
+        z = (z_pres, z_depth, z_where, z_what, z_dyna)
+        
+        
+        # Update states via RNN; In: state_*_prev - hidden & cell state of RNN, z - tuple of z_att and z_dyna 
+        state_post = self.temporal_encode(state_post_prev, z, bg, prior_or_post='post')
+        state_prior = self.temporal_encode(state_prior_prev, z, bg, prior_or_post='prior')
+        
+        z_dyna_loc, z_dyna_scale = self.latent_prior_prop(h_prior) #! Eq(23) of supl.
+        z_dyna_prior = Normal(z_dyna_loc, z_dyna_scale)
+        kl_dyna = kl_divergence(z_dyna_post, z_dyna_prior) #! we get post & prior z_{dyna} from each Eq.(23) and Eq.(12)
+        
+        #! This is not kl divergence. This is an auxialiary loss q(z_pres|) is fit to fixed prior
+        kl_pres = kl_divergence_bern_bern(z_pres_prob, torch.full_like(z_pres_prob, self.z_pres_prior_prob))
+        # If we don't want this auxiliary loss
+        if not ARCH.AUX_PRES_KL:
+            kl_pres = torch.zeros_like(kl_pres)
+        
+        # Reduced to (B,)
+        
+        #! Sec. 3.4.2 of paper; Again, this is not really kl
+        kl_pres = kl_pres.flatten(start_dim=1).sum(-1)
+        kl_dyna = kl_dyna.flatten(start_dim=1).sum(-1)
+        
+        # We are not using q, so these will be zero: ->  Only prior exist?
+        kl_where = torch.zeros_like(kl_pres)
+        kl_what = torch.zeros_like(kl_pres)
+        kl_depth = torch.zeros_like(kl_pres)
+        assert kl_pres.size(0) == B
+        kl = (kl_pres, kl_depth, kl_where, kl_what, kl_dyna)
+        
+        return state_post, state_prior, z, kl, proposal
+
+
+    def propagate_rob_fg(self, x, ee, state_post_prev, state_prior_prev, z_prev, bg):
+        """
+        # propagation conditioned on robot action (ee)
+        #! One step of propagation posterior
+        Args:
+            x: (B, 6, H, W), img -> concat of bg & {bg-fg}
+            (h, c), (h, c): each (B, N, D)
+            z_prev: #! what's inside the latent
+                z_pres: (B, N, 1) -> Bernoulli distrib.
+                z_depth: (B, N, 1)
+                z_where: (B, N, 4)
+                z_what: (B, N, D)
+                z_dyna: (B, N, D)
+
+        Returns:
+            h_post, c_post: (B, N, D)
+            h_prior, c_prior: (B, N, D)
+            z:
+                z_pres: (B, N, 1) #! explicit
+                z_depth: (B, N, 1) #! explicit
+                z_where: (B, N, 4) #! explicit
+                z_what: (B, N, D)
+                z_dyna: (B, N, D)
+            kl:
+                kl_pres: (B,)
+                kl_what: (B,)
+                kl_where: (B,)
+                kl_depth: (B,)
+                kl_dyna: (B,)
+            proposal_region: (B, N, 4)
+
+        """
+        z_pres_prev, z_depth_prev, z_where_prev, z_what_prev, z_dyna_prev = z_prev
+        B, N, _ = z_pres_prev.size()
+        
+        if N == 0: # num of entities. zero if nothing has been discovered before
+            # No object is propagated -> then do discovery
+            return state_post_prev, state_prior_prev, z_prev, (0.0, 0.0, 0.0, 0.0, 0.0), z_prev[2]
+        
+        h_post, c_post = state_post_prev # [B, N, 128], [B, N, 128] # NOTE that h_post is inferred by Eq.(18)
+        h_prior, c_prior = state_prior_prev # [B, N, 128], [B, N, 128]
+        #! 1) Inference procedure of "propagate": Sec A.2 of supl.
+        # Predict proposal locations, (B, N, 2)
+        proposal_offset = self.pred_proposal(h_post) #! Eq.(19) of supl., by posterior OS-RNN; h_{hat}_{t-1}^k
+        proposal = torch.zeros_like(z_where_prev) # [B, N, 4] -> size of proposal area
+        # Update size only; extract proposal region of the image, centered @ the prev. obj. location o_{t-1}^{xy,k} 
+        proposal[..., 2:] = z_where_prev[..., 2:] # o^{xy} - (x,y)
+        proposal[..., :2] = z_where_prev[..., :2] + ARCH.PROPOSAL_UPDATE_MIN + ( #! o^{hw}; Eq.(19) of supl., (h,w)
+            ARCH.PROPOSAL_UPDATE_MAX - ARCH.PROPOSAL_UPDATE_MIN) * torch.sigmoid(proposal_offset)
+        # proposal_offset -> (0,1) ->  relocate & rescale to (0.1, 0.3)
+        # Get proposal glimpses
+        # x_repeat: (B*N, 3, H, W)
+        x_repeat = torch.repeat_interleave(x[:, :3], N, dim=0) # crop-out the first three channel.
+        # if N = 5 & batch is a, b, ..., : aaaaabbbbbccccc ... # if torch.repeat ab...ab...ab...ab...ab...
+        #! arch.glimpse_shape = [16, 16]
+        # (B*N, 3, H, W) #! Eq.(4) of paper
+        proposal_glimpses = spatial_transform(image=x_repeat, z_where=proposal.view(B * N, 4), #! Eq.(20) of supl.
+                                              out_dims=(B * N, 3, *ARCH.GLIMPSE_SHAPE))
+        # (B, N, 3, H, W)
+        proposal_glimpses = proposal_glimpses.view(B, N, 3, *ARCH.GLIMPSE_SHAPE)
+        # (B, N, D) # TODO (chmin): concat action here!
+        proposal_enc = self.proposal_encoder(proposal_glimpses) #! Eq.(21) of supl.
+        # proposal_enc = self.proposal_encoder.forward_action(proposal_glimpses, ee) #! Eq.(21) of supl.
+        # (B, N, D)
+        # This will be used to condition everything: # TODO (cheolhui): condition action here!
+        enc = torch.cat([proposal_enc, h_post], dim=-1) # [B, N, D] + [B, N, D] = [B, N, 2D] 
+        # TODO (chmin): or concat action here?
+        # z_dyna_loc, z_dyna_scale = self.latent_post_prop(enc) #! Eq.(22) of supl.
+        z_dyna_loc, z_dyna_scale = self.latent_post_prop_action.forward_action(enc, ee) #! Eq.(22) of supl.
+        z_dyna_post = Normal(z_dyna_loc, z_dyna_scale)
+        z_dyna = z_dyna_post.rsample() #! Eq.(23) of supl.
+        # given dynamics latent (z_{dyna}) from posterior (z_dyna_post), the attribute latents are computed as follows
+        #! {pres, depth, where, what} are inferred from z_dyna  (B, N, D)
+        (z_pres_prob, z_depth_offset_loc, z_depth_offset_scale, z_where_offset_loc, #! Eq.(13) of supl.
+         z_where_offset_scale, z_what_offset_loc, z_what_offset_scale, 
          z_depth_gate, z_where_gate, z_what_gate) = self.pres_depth_where_what_prior(z_dyna)
         
         # Sampling
@@ -898,7 +1101,7 @@ class FgModule(nn.Module):
         importance_map = importance_map / (torch.sum(importance_map, dim=1, keepdim=True) + 1e-5) #! Eq.(47) of supl.
         
         # Final fg (B, N, 3, H, W)
-        fg = (y_att * importance_map).sum(dim=1) #! Eq.(48) of supl.
+        fg = (y_att * importance_map).sum(dim=1) #! Eq.(48) of supl.+
         # Fg mask (B, N, 1, H, W)
         alpha_map = (importance_map * alpha_att_hat).sum(dim=1) #! Eq.(49) of supl.
         
@@ -1185,7 +1388,12 @@ class LatentPostProp(nn.Module):
             [ARCH.PROPOSAL_ENC_DIM + ARCH.RNN_HIDDEN_DIM, 128, 128,
              ARCH.Z_DYNA_DIM * 2
              ], act=nn.CELU())
-    
+        self.act_enc = MLP(
+                [ARCH.PROPOSAL_ENC_DIM + ARCH.RNN_HIDDEN_DIM + ARCH.ACTION_DIM, 128, 128,
+                ARCH.Z_DYNA_DIM * 2
+                ], act=nn.CELU())
+
+
     def forward(self, x):
         """
         Args:
@@ -1194,8 +1402,32 @@ class LatentPostProp(nn.Module):
         Returns:
             z_dyna_loc, z_dyna_scale: (B, 1, G, G)
         """
-        B = x.size(0)
-        params = self.enc(x) # [B, N, 2D]
+        B, N, *_ = x.size()
+        params = self.enc(x) # [B, 2D], Out: [B, D]
+        # (B, G*G, D)
+        (z_dyna_loc, z_dyna_scale) = torch.chunk(params, chunks=2, dim=-1) # [B, N, D]
+        z_dyna_scale = F.softplus(z_dyna_scale) + 1e-4
+        
+        return z_dyna_loc, z_dyna_scale
+
+    def forward_action(self, x, ee):
+        """
+        Args:
+            x: (B, N, 2D)
+            ee: (B, P)
+        Returns:
+            z_dyna_loc, z_dyna_scale: (B, 1, G, G)
+        """
+        B, N, *_ = x.size()
+        params = []
+        for n in range(N):
+            if n == 0:
+                param = self.act_enc(torch.cat([x[:, n, ...], ee], dim=-1)) # In: [B, 2D], Out: [B, D]
+            else:
+                param = self.enc(x[:, n, ...]) # [B, 2D], Out: [B, D]
+            params.append(param)
+        params = torch.stack(params, dim=1) # [B, N, D]
+
         # (B, G*G, D)
         (z_dyna_loc, z_dyna_scale) = torch.chunk(params, chunks=2, dim=-1) # [B, N, D]
         z_dyna_scale = F.softplus(z_dyna_scale) + 1e-4
@@ -1235,7 +1467,7 @@ class PresDepthWhereWhatPrior(nn.Module):
     
     def __init__(self):
         nn.Module.__init__(self)
-        self.enc = MLP(
+        self.enc = MLP( #! encodes z_dyna into z_pres, z_depth, z_what, z_where
             [ARCH.Z_DYNA_DIM, 128, 128,
              ARCH.Z_PRES_DIM + (ARCH.Z_DEPTH_DIM + ARCH.Z_WHERE_DIM + ARCH.Z_WHAT_DIM) * 2 + (
                      ARCH.Z_DEPTH_DIM + ARCH.Z_WHERE_DIM + ARCH.Z_WHAT_DIM
@@ -1322,7 +1554,7 @@ class ProposalEncoder(nn.Module):
             nn.CELU(),
             nn.GroupNorm(8, 128),
         )
-        
+        # TODO (cheolhui): robot action should be conditioned independently
         self.enc_what = nn.Linear(128 * embed_size ** 2, ARCH.PROPOSAL_ENC_DIM)
     
     def forward(self, x):
@@ -1336,6 +1568,21 @@ class ProposalEncoder(nn.Module):
         B, N, C, H, W = x.size()
         x = x.view(B * N, 3, H, W)
         x = self.enc(x) # [B*N, D, 1, 1]
+        x = x.flatten(start_dim=1) # [B*N, D]
+        return self.enc_what(x).view(B, N, ARCH.PROPOSAL_ENC_DIM)
+
+    def forward_action(self, x, ee):
+        """
+        Infer action-conditioned proposal
+        Args:
+            x: (B, N, 3, H, W)
+            ee: (B, P), P: end-effector dim
+        Returns:
+            enc: (B, N, D)
+        """
+        B, N, C, H, W = x.size()
+        x = x.view(B * N, 3, H, W)
+        x = self.enc(x) # [B*N, D, 1, 1] # TODO: seperate first entity to be conditioned on action
         x = x.flatten(start_dim=1) # [B*N, D]
         return self.enc_what(x).view(B, N, ARCH.PROPOSAL_ENC_DIM)
 

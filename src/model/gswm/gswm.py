@@ -60,19 +60,27 @@ class GSWM(nn.Module):
 
         Args:
             seq: (B, T, 3, H, W)
-            ee_poses: (B, T) - shape of end-effector poses
+            ee_poses: (B, T, 7) - shape of end-effector poses (x, y, z & quaternions)
             global_step: global training step
-
+            # TODO (cheolhui): test with various priors
         Returns:
 
         """
         self.anneal(global_step)
         seq = self.random_crop(seq, self.T) #! crop the image sequence 
+        ee_poses = self.random_crop(ee_poses, self.T) #! crop the image sequence 
         B, T, C, H, W = seq.size()
-    
-        # Doing tracking
-        log = self.track(seq, discovery_dropout=ARCH.DISCOVERY_DROPOUT)
-    
+        P = ee_poses.size(-1) # dim of ee pose
+
+        # Doing tracking, conditioned on ee_pose
+        # log = self.track(seq, discovery_dropout=ARCH.DISCOVERY_DROPOUT)
+        #! 1) track_rob_fg: robot is embedded in fg., equal hierarchy w/ objects
+        log = self.track_rob_fg(seq, ee_poses, discovery_dropout=ARCH.DISCOVERY_DROPOUT)
+
+        #! 2) track_bg: robot is embedded in bg.
+
+
+
         # (B, T, 1, H, W)
         alpha_map = log['alpha_map']
         fg = log['fg']
@@ -130,6 +138,41 @@ class GSWM(nn.Module):
         ) #! Eq.(50) of supl.
     
         return log
+
+    def track_rob_fg(self, seq, ee_poses, discovery_dropout):
+        """ conditioned sequence on ee_poses; the actions or joint values condition 
+            ee_poses: [B, T, P] where P is the dimension of end-effector pose
+        """
+        B, T, C, H, W = seq.size()
+        P = ee_poses.size(-1) # 7-dim vector of ee pose
+        # Process background
+        if ARCH.BG_ON: # TODO (cheolhui): checkout the backgrounds
+            bg_things = self.bg_module.encode(seq) # TODO (cheolhui): check how we can infer background masks
+        else:
+            bg_things = dict(bg=torch.zeros_like(seq), kl_bg=torch.zeros(B, T, device=seq.device))
+    
+        # Process foreground
+        seq_diff = seq - bg_things['bg'] # [B, T, C, H, W] - [B, T, C, H, W] #? masked foreground?
+        # (B, T, >C<, H, W)
+        inpt = torch.cat([seq, seq_diff], dim=2) #! Input of Eq.(31) of supl.along channel axis ; [B, T, 6, H, W]
+        # fg_things = self.fg_module.track(inpt, bg_things['bg'], discovery_dropout=discovery_dropout)
+        fg_things = self.fg_module.track_rob_fg(inpt, ee_poses, bg_things['bg'], discovery_dropout=discovery_dropout)
+    
+        # Prepares things to compute reconstruction
+        # (B, T, 1, H, W)
+        alpha_map = fg_things['alpha_map']
+        fg = fg_things['fg']
+        bg = bg_things['bg']
+        
+        log = fg_things.copy()
+        log.update(bg_things.copy())
+        log.update(
+            imgs=seq,
+            recon=fg + (1 - alpha_map) * bg,
+        ) #! Eq.(50) of supl.
+    
+        return log
+
     
     def generate(self, seq, cond_steps, fg_sample, bg_sample):
     
