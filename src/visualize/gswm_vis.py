@@ -47,8 +47,10 @@ class GSWMVis:
             model = model.module
         model.eval()
     
-        data = self.get_batch(dataset, indices, device)
-        things = model.track(data, discovery_dropout=0.0)
+        # data = self.get_batch(dataset, indices, device)
+        imgs, ees = self.get_batch(dataset, indices, device) # we get both images and ees to condition on
+        # things = model.track(data, discovery_dropout=0.0)
+        things = model.track_rob_fg(imgs, ees, discovery_dropout=0.0)
     
         log = self.clean_log(things, len(indices))
     
@@ -79,7 +81,7 @@ class GSWMVis:
     @torch.no_grad()
     def show_generation(self, model, dataset, indices, device, cond_steps, fg_sample, bg_sample, num):
         """
-        
+        # TODO (cheolhui): figure out what each bg_sample and fg_sample implies
         Args:
             imgs: (B, T, 3, H, W)
             recons: (B, T, 3, H, W)
@@ -96,14 +98,17 @@ class GSWMVis:
         if isinstance(model, nn.DataParallel):
             model = model.module
         model.eval()
-        data = self.get_batch(dataset, indices, device)
+        #  data = self.get_batch(dataset, indices, device) 
+        imgs, ees = self.get_batch(dataset, indices, device) # TODO (cheolhui): modify the data return
     
         gifs = []
         for i in range(num):
             if i == 0:
-                things = model.generate(data, cond_steps=cond_steps, fg_sample=fg_sample, bg_sample=False)
+                # things = model.generate(data, cond_steps=cond_steps, fg_sample=fg_sample, bg_sample=False)
+                things = model.generate_rob_fg(imgs, ees, cond_steps=cond_steps, fg_sample=fg_sample, bg_sample=False)
             else:
-                things = model.generate(data, cond_steps=cond_steps, fg_sample=fg_sample, bg_sample=bg_sample)
+                # things = model.generate(data, cond_steps=cond_steps, fg_sample=fg_sample, bg_sample=bg_sample)
+                things = model.generate_rob_fg(imgs, ees, cond_steps=cond_steps, fg_sample=fg_sample, bg_sample=bg_sample)
             log = self.clean_log(things, len(indices))
         
             B, T, _, H, W = log.fg.size()
@@ -225,7 +230,7 @@ class GSWMVis:
             writer.add_video(f'generation/video_{i}', gif[i:i+1], global_step)
             
     def get_batch(self, dataset, indices, device):
-    
+        # TODO (cheolhui): resolve shape mistmatch errors
         # For some chosen data we show something here
         dataset = Subset(dataset, indices)
         dataloader = DataLoader(dataset, batch_size=len(dataset), shuffle=False)
@@ -233,8 +238,10 @@ class GSWMVis:
         # (B, T, 3, H, W)
         data = next(iter(dataloader)) #! create data generator
         data = [d.to(device) for d in data]
-        data, *_ = data
-        return data
+        # data, *_ = data
+        imgs, ees, *_ = data
+        # return data
+        return imgs, ees
     
     @torch.no_grad()
     def show_gif(self, model, dataset, indices, device, cond_steps, gen_len, path, fps):
@@ -242,8 +249,10 @@ class GSWMVis:
             model = model.module
         model.eval()
         # get data
-        imgs = self.get_batch(dataset, indices, device)
+        # imgs = self.get_batch(dataset, indices, device)
+        imgs, ees = self.get_batch(dataset, indices, device)
         imgs = imgs[:, :gen_len]
+        ees = ees[:, :gen_len]
         model_fn = lambda model, imgs: model.generate(imgs, cond_steps=cond_steps, fg_sample=False, bg_sample=False)
         log = model_fn(model, imgs)
         log = AttrDict(log)

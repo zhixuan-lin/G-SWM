@@ -50,14 +50,14 @@ class RobotObj(Dataset):
         self.seq_per_episode = self.EP_LEN - self.sample_length + 1
         
         for v, folders in self.variations: # var_idx, folder_idx
-            ep_len = 0
             for f in folders:
-                ep_len += 1
                 dir_name = os.path.join(self.root, 'variation' + str(v), 'episodes', 'episode' + str(f)) # '../data/robot_obj/val/0'
                 paths = list(glob.glob(osp.join(dir_name, 'left_shoulder_rgb', '*.png')))
                 ld_pkl_path = osp.join(dir_name, 'low_dim_obs.pkl')
-                if len(paths) < 100: #! ignore imperfect demos
+                if len(paths) < 207: #! ignore imperfect demos
                     continue
+                if len(paths) > 207:
+                    paths = paths[:207]
                 lds = self.get_low_dim_robot_data(ld_pkl_path)
                 # if len(paths) != self.EP_LEN:
                 #     continue
