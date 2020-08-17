@@ -231,7 +231,7 @@ class GSWM(nn.Module):
         return log
 
     def generate_rob_fg(self, seq, ees, cond_steps, fg_sample, bg_sample):
-        # generate video sequence conditioned on robot acitons 
+        # generate video sequence conditioned on robot actions into foreground 
         if ARCH.BG_ON:
             bg_things = self.bg_module.generate(seq, cond_steps, bg_sample) # we don't generate bg conditioned on action
         else:
@@ -243,6 +243,28 @@ class GSWM(nn.Module):
         # fg_things = self.fg_module.generate(inpt, bg_things['bg'], cond_steps, fg_sample)
         # fg_things = self.fg_module.generate(inpt, bg_things['bg'], cond_steps, fg_sample)
         fg_things = self.fg_module.generate_rob_fg(inpt, ees, bg_things['bg'], cond_steps, fg_sample)
+        
+        alpha_map = fg_things['alpha_map']
+        fg = fg_things['fg']
+        bg = bg_things['bg']
+        log = fg_things.copy()
+        log.update(bg_things.copy())
+        log.update(imgs=seq, recon=fg + (1 - alpha_map) * bg)
+        
+        return log
+
+    def generate_rob_bg(self, seq, ees, cond_steps, fg_sample, bg_sample):
+        # generate video sequence conditioned on robot actions into background 
+        if ARCH.BG_ON:
+            # bg_things = self.bg_module.generate(seq, cond_steps, bg_sample) # we don't generate bg conditioned on action
+            bg_things = self.bg_module.generate_rob_bg(seq, ees, cond_steps, bg_sample) # we don't generate bg conditioned on action
+        else:
+            bg_things = dict(bg=torch.zeros_like(seq))
+            # Process foreground
+        seq_diff = seq - bg_things['bg']
+        # (B, T, >C<, H, W); ees - [B, T , P], where P is the action-dim
+        inpt = torch.cat([seq, seq_diff], dim=2) # TODO (cheolhui): check the shape
+        fg_things = self.fg_module.generate(inpt, bg_things['bg'], cond_steps, fg_sample)
         
         alpha_map = fg_things['alpha_map']
         fg = fg_things['fg']

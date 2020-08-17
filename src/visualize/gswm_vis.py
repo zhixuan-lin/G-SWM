@@ -2,6 +2,7 @@ import torch
 import os
 import os.path as osp
 import numpy as np
+
 import torchvision
 from .utils import draw_boxes, figure_to_numpy, make_gif
 from utils import transform_tensors
@@ -79,7 +80,7 @@ class GSWMVis:
     
 
     @torch.no_grad()
-    def show_generation(self, model, dataset, indices, device, cond_steps, fg_sample, bg_sample, num):
+    def show_generation(self, model, dataset, indices, device, cond_steps, fg_sample, bg_sample, num, action_cond='fg'):
         """
         # TODO (cheolhui): figure out what each bg_sample and fg_sample implies
         Args:
@@ -105,10 +106,21 @@ class GSWMVis:
         for i in range(num):
             if i == 0:
                 # things = model.generate(data, cond_steps=cond_steps, fg_sample=fg_sample, bg_sample=False)
-                things = model.generate_rob_fg(imgs, ees, cond_steps=cond_steps, fg_sample=fg_sample, bg_sample=False)
+                if action_cond == 'fg':
+                    things = model.generate_rob_fg(imgs, ees, cond_steps=cond_steps, fg_sample=fg_sample, bg_sample=False)
+                elif action_cond == 'bg':
+                    things = model.generate_rob_bg(imgs, ees, cond_steps=cond_steps, fg_sample=fg_sample, bg_sample=False)
+                else:
+                    raise ValueError("Currently other than fg/bg is not supported.")
             else:
                 # things = model.generate(data, cond_steps=cond_steps, fg_sample=fg_sample, bg_sample=bg_sample)
-                things = model.generate_rob_fg(imgs, ees, cond_steps=cond_steps, fg_sample=fg_sample, bg_sample=bg_sample)
+
+                if action_cond == 'fg':
+                    things = model.generate_rob_fg(imgs, ees, cond_steps=cond_steps, fg_sample=fg_sample, bg_sample=False)
+                elif action_cond == 'bg':
+                    things = model.generate_rob_bg(imgs, ees, cond_steps=cond_steps, fg_sample=fg_sample, bg_sample=False)
+                else:
+                    raise ValueError("Currently other than fg/bg is not supported.")
             log = self.clean_log(things, len(indices))
         
             B, T, _, H, W = log.fg.size()
@@ -224,7 +236,8 @@ class GSWMVis:
             writer.add_video(f'tracking/video_{i}', gif[i:i+1], global_step)
 
         # Generation
-        grid, gif = self.show_generation(model, dataset, indices, device, cond_steps, fg_sample=fg_sample, bg_sample=bg_sample, num=num_gen)
+        grid, gif = self.show_generation(model, dataset, indices, device, cond_steps, fg_sample=fg_sample, bg_sample=bg_sample,
+             num=num_gen, action_cond='bg')
         writer.add_image('generation/grid', grid, global_step)
         for i in range(len(gif)):
             writer.add_video(f'generation/video_{i}', gif[i:i+1], global_step)

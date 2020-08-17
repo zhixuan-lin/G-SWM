@@ -33,9 +33,9 @@ class FgModule(nn.Module):
         self.glimpse_decoder = GlimpseDecoder()
         self.latent_post_disc = LatentPostDisc()  
         self.latent_post_disc_action = LatentPostDisc() #! action-conditioned
-        # self.latent_post_prop = LatentPostProp()
+        self.latent_post_prop = LatentPostProp()
         self.latent_post_prop_action = LatentPostProp() #! action-conditioned
-        # self.latent_prior_prop = LatentPriorProp()
+        self.latent_prior_prop = LatentPriorProp()
         self.latent_prior_prop_action = LatentPriorProp()
         self.pres_depth_where_what_prior = PresDepthWhereWhatPrior()
         #TODO: the latent part is not used. I put it here so we can load old checkpoints
@@ -266,7 +266,7 @@ class FgModule(nn.Module):
             Returns:
                 A dictionary. Everything will be (B, T, ...). Refer to things_t.
             """
-            B, T, C, H, W = seq.size() 
+            B, T, C, H, W =     seq.size() 
             #! Empty, N=0, clean states
             state_post, state_prior, z, ids = self.get_dummy_things(B, seq.device) # all params are zeros.
             start_id = torch.zeros(B, device=seq.device).long() # TODO (cheolhui): Figure out what 'id' does.
