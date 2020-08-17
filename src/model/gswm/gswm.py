@@ -1,3 +1,4 @@
+from numpy.core.getlimits import _discovered_machar
 import torch
 import random
 import numpy as np
@@ -79,6 +80,8 @@ class GSWM(nn.Module):
             log = self.track_rob_bg(seq, ee_poses, discovery_dropout=ARCH.DISCOVERY_DROPOUT)
         elif ARCH.ACTION_COND == 'fg':
             log = self.track_rob_fg(seq, ee_poses, discovery_dropout=ARCH.DISCOVERY_DROPOUT)
+        elif ARCH.ACTION_COND == 'agent': # seperate agent layer in scene space
+            log = self.track_agent(seq, ee_poses, _discovery_dropout=ARCH.DISCOVERY_DROPOUT)
         else:
             raise ValueError("Currently Only Either BG or FG is Dupported.")
 
