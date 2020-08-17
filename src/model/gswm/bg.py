@@ -30,6 +30,7 @@ class BgModule(nn.Module):
         
         )
         self.enc_fc = nn.Linear(self.embed_size ** 2 * 512, ARCH.IMG_ENC_DIM)
+        self.enc_fc_rob_action = nn.Linear(self.embed_size ** 2 * 512 + ARCH.ACTION_DIM, ARCH.IMG_ENC_DIM)
         self.dec_fc = nn.Linear(ARCH.Z_CTX_DIM, self.embed_size ** 2 * 128)
         # Decoder latent into background
         self.dec = nn.Sequential(
@@ -161,12 +162,12 @@ class BgModule(nn.Module):
         
         return things
 
-    def encode_rob_bg(self, seq):
+    def encode_rob_bg(self, seq, ee):
         """
         Encode input frames into context latents, conditioned on end-effector / joint values
         Args:
             seq: (B, T, 3, H, W)
-
+            ee: (B, T, P)
         Returns:
             things:
                 bg: (B, T, 3, H, W)
@@ -174,15 +175,20 @@ class BgModule(nn.Module):
         """
         # (B, T, 3, H, W)
         B, T, C, H, W = seq.size()
+        P = ee.size(-1)
         
         # Encode images
-        # (B*T, C, H, W)
-        enc = self.enc(seq.reshape(B * T, 3, H, W)) #! Eq.(5) of supl.
+        # (B*T, C, H, W) # TODO check the structure of self.enc
+        enc = self.enc(seq.reshape(B * T, 3, H, W)) #! [B*T, C, h, w]  Eq.(5) of supl.
+        ee = ee.reshape(B * T, P) #! Eq.(5) of supl.
         # I deliberately do this ugly thing because for future version we may need enc to do bg interaction
+        # TODO: BG interaction here! ->  
         # (B*T, D) #! flatten, no convolution?
         enc = enc.flatten(start_dim=1)
-        # (B*T, D)
-        enc = self.enc_fc(enc) #! Eq.(5) of supl.
+        enc = torch.cat([enc, ee], dim=-1)
+        # (B*T, D) enc_fc_rob_action
+        # enc = self.enc_fc(enc) #! Eq.(5) of supl.
+        enc = self.enc_fc_rob_action(enc) #! Eq.(5) of supl.
         # (B, T, D)
         enc = enc.view(B, T, ARCH.IMG_ENC_DIM) # 
         

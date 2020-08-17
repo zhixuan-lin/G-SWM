@@ -129,3 +129,5 @@ ARCH.DISCOVERY_DROPOUT = 0.5
 # Auxiliary presence loss in propagation
 ARCH.AUX_PRES_KL = True
 
+# Action conditioning for robot agent.
+ARCH.ACTION_COND = 'bg' # 'fg' / 'seperate' - where the action conditoined on.
