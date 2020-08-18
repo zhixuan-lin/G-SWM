@@ -211,6 +211,40 @@ class GSWM(nn.Module):
         ) #! Eq.(50) of supl.
     
         return log
+
+    def track_agent(self, seq, ee_poses, discovery_dropout):
+        """ conditioned sequence on ee_poses in the backgrounds; the actions or joint values condition 
+            The agent layer is segmented throug GENESIS.
+        """
+        B, T, C, H, W = seq.size()
+        P = ee_poses.size(-1) # 7-dim vector of ee pose
+        # Process background
+        if ARCH.BG_ON: # TODO (cheolhui): condition robot on backgrounds
+            # bg_things = self.bg_module.encode(seq) # T
+            bg_things = self.bg_module.encode_rob_bg(seq, ee_poses) # T
+        else:
+            bg_things = dict(bg=torch.zeros_like(seq), kl_bg=torch.zeros(B, T, device=seq.device))
+    
+        # Process foreground
+        seq_diff = seq - bg_things['bg'] # [B, T, C, H, W] - [B, T, C, H, W] #? masked foreground?
+        # (B, T, >C<, H, W)
+        inpt = torch.cat([seq, seq_diff], dim=2) #! Input of Eq.(31) of supl.along channel axis ; [B, T, 6, H, W]
+        fg_things = self.fg_module.track(inpt, bg_things['bg'], discovery_dropout=discovery_dropout) 
+    
+        # Prepares things to compute reconstruction
+        # (B, T, 1, H, W)
+        alpha_map = fg_things['alpha_map']
+        fg = fg_things['fg']
+        bg = bg_things['bg']
+        
+        log = fg_things.copy()
+        log.update(bg_things.copy())
+        log.update(
+            imgs=seq,
+            recon=fg + (1 - alpha_map) * bg,
+        ) #! Eq.(50) of supl.
+    
+        return log
     
     def generate(self, seq, cond_steps, fg_sample, bg_sample):
     
