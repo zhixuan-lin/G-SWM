@@ -9,6 +9,7 @@ from torch.distributions import Normal
 from .module import anneal
 from .arch import ARCH
 from .bg import BgModule
+from .bg_agent import AgentBgModule
 from .fg import FgModule
 from .fg_deter import FgModuleDeter
 from attrdict import AttrDict
@@ -22,7 +23,10 @@ class GSWM(nn.Module):
             self.fg_module = FgModuleDeter()
         else:
             self.fg_module = FgModule()
-        self.bg_module = BgModule()
+        if ARCH.ACTION_COND == 'agent':
+            self.bg_module = AgentBgModule()
+        else:
+            self.bg_module = BgModule()
         self.sigma = ARCH.SIGMA_START_VALUE if ARCH.SIGMA_ANNEAL else ARCH.SIGMA
     
     def anneal(self, global_step):
@@ -186,7 +190,6 @@ class GSWM(nn.Module):
         P = ee_poses.size(-1) # 7-dim vector of ee pose
         # Process background
         if ARCH.BG_ON: # TODO (cheolhui): condition robot on backgrounds
-            # bg_things = self.bg_module.encode(seq) # T
             bg_things = self.bg_module.encode_rob_bg(seq, ee_poses) # T
         else:
             bg_things = dict(bg=torch.zeros_like(seq), kl_bg=torch.zeros(B, T, device=seq.device))
@@ -214,14 +217,14 @@ class GSWM(nn.Module):
 
     def track_agent(self, seq, ee_poses, discovery_dropout):
         """ conditioned sequence on ee_poses in the backgrounds; the actions or joint values condition 
-            The agent layer is segmented throug GENESIS.
+            The agent layer is segmented through scene mixture models like GENESIS / SPACE.
         """
         B, T, C, H, W = seq.size()
         P = ee_poses.size(-1) # 7-dim vector of ee pose
         # Process background
         if ARCH.BG_ON: # TODO (cheolhui): condition robot on backgrounds
-            # bg_things = self.bg_module.encode(seq) # T
-            bg_things = self.bg_module.encode_rob_bg(seq, ee_poses) # T
+            bg_things = self.bg_module.encode(seq) # T
+            # bg_things = self.bg_module.encode_rob_bg(seq, ee_poses) # T
         else:
             bg_things = dict(bg=torch.zeros_like(seq), kl_bg=torch.zeros(B, T, device=seq.device))
     

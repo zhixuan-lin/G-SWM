@@ -4,8 +4,8 @@ model: 'GSWM'
 resume: false #! whether to load checkpoints
 resume_ckpt: ''
 parallel: false
-device_ids: [0, 2, 6]
-device: 'cuda:3'
+device_ids: [0, 1]
+device: 'cuda:0'
 logdir: '../output/logs'
 checkpointdir: '../output/checkpoints'
 evaldir: '../output/eval'
@@ -53,7 +53,7 @@ ARCH:
   G: 4
   T: [2, 4, 6, 8, 10, 12, 14, 16, 18, 20]
   T_MILESTONES: [10000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000]
-  ACTION_COND: 'fg' # 'fg' / 'seperate' - where the action conditoined on.
+  ACTION_COND: 'agent' # 'fg' / 'bg' /'agent' - where the action conditoined on.
 
   TAU_START_VALUE: 1.0
   TAU_END_VALUE: 1.0

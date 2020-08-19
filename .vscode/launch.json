@@ -11,7 +11,7 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "args": ["--task", "train", "--config", "configs/robot_obj.yaml"],
-            "cwd": "/home/cheolhui/code/tf-gswm/G-SWM/src"
+            "cwd": "/home/cheolhui/Cheolhui/32::GSwm/G-SWM/src"
         }
     ]
 }

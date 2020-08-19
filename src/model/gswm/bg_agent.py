@@ -7,7 +7,7 @@ from torch.distributions.kl import kl_divergence
 from .arch import arch
 
 
-class AgentBg(nn.Module):
+class AgentBgModule(nn.Module):
     "background layer that decomposed into agent & non-agent"
     # TODO (cheolhui): make it compatible with sequential data
     def __init__(self):

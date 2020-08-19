@@ -1,9 +1,3 @@
-import torch
-GPU_NUM = 5 
-device = torch.device(f'cuda:{GPU_NUM}' if torch.cuda.is_available() else 'cpu')
-torch.cuda.set_device(device) # change allocation of current GPU
-
-
 import sys
 
 if '.' not in sys.path:
