@@ -131,3 +131,33 @@ ARCH.AUX_PRES_KL = True
 
 # Action conditioning for robot agent.
 ARCH.ACTION_COND = 'bg' # 'fg' / 'seperate' - where the action conditoined on.
+
+
+
+# Params from Image shape
+    
+ARCH.IMAGE_SHAPE = (64, 64),
+
+# Grid size. There will be G*G slots
+ARCH.G = 8
+
+
+
+# Background configurations
+# ==== START ====
+# Number of background components. If you set this to one, you should use a strong decoder instead.
+ARCH.K =  5
+# Background likelihood sigma
+ARCH.BG_SIGMA = 0.15
+# Image encoding dimension
+ARCH.IMG_ENC_DIM_BG = 64
+# Latent dimensions
+ARCH.Z_MASK_DIM = 32
+ARCH.Z_COMP_DIM = 32
+
+# (H, W)
+ARCH.RNN_MASK_HIDDEN_DIM = 64
+# This should be same as above
+ARCH.RNN_MASK_PRIOR_HIDDEN_DIM = 64
+ARCH.PREDICT_COMP_HIDDEN_DIM = 64
+

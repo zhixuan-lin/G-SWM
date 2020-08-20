@@ -27,8 +27,8 @@ class BgModule(nn.Module):
             nn.Conv2d(256, 512, 3, 2, 1),
             nn.CELU(),
             nn.GroupNorm(32, 512),
-        
         )
+        
         self.enc_fc = nn.Linear(self.embed_size ** 2 * 512, ARCH.IMG_ENC_DIM)
         self.enc_fc_rob_action = nn.Linear(self.embed_size ** 2 * 512 + ARCH.ACTION_DIM, ARCH.IMG_ENC_DIM)
         self.dec_fc = nn.Linear(ARCH.Z_CTX_DIM, self.embed_size ** 2 * 128)
@@ -64,8 +64,8 @@ class BgModule(nn.Module):
         self.prior_net = MLP([ARCH.RNN_CTX_HIDDEN_DIM, 128, 128, ARCH.Z_CTX_DIM * 2], act=nn.CELU())
         self.post_net = MLP([ARCH.RNN_CTX_HIDDEN_DIM + ARCH.IMG_ENC_DIM, 128, 128, ARCH.Z_CTX_DIM * 2], act=nn.CELU())
     
-    def forward(self, seq):
-        return self.encode(seq)
+    def forward(self, seq): 
+        return self.encode(seq) #? Maybe it is not being explicitly used...
     
     def anneal(self, global_step):
         pass

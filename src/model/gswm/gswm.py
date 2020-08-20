@@ -24,7 +24,7 @@ class GSWM(nn.Module):
         else:
             self.fg_module = FgModule()
         if ARCH.ACTION_COND == 'agent':
-            self.bg_module = AgentBgModule()
+            self.bg_module = AgentBgModule() #! we need to implement encode & generate method
         else:
             self.bg_module = BgModule()
         self.sigma = ARCH.SIGMA_START_VALUE if ARCH.SIGMA_ANNEAL else ARCH.SIGMA
@@ -85,7 +85,7 @@ class GSWM(nn.Module):
         elif ARCH.ACTION_COND == 'fg':
             log = self.track_rob_fg(seq, ee_poses, discovery_dropout=ARCH.DISCOVERY_DROPOUT)
         elif ARCH.ACTION_COND == 'agent': # seperate agent layer in scene space
-            log = self.track_agent(seq, ee_poses, _discovery_dropout=ARCH.DISCOVERY_DROPOUT)
+            log = self.track_agent(seq, ee_poses, discovery_dropout=ARCH.DISCOVERY_DROPOUT)
         else:
             raise ValueError("Currently Only Either BG or FG is Dupported.")
 
@@ -223,7 +223,7 @@ class GSWM(nn.Module):
         P = ee_poses.size(-1) # 7-dim vector of ee pose
         # Process background
         if ARCH.BG_ON: # TODO (cheolhui): condition robot on backgrounds
-            bg_things = self.bg_module.encode(seq) # T
+            bg_things = self.bg_module.encode(seq, ee_poses) # T
             # bg_things = self.bg_module.encode_rob_bg(seq, ee_poses) # T
         else:
             bg_things = dict(bg=torch.zeros_like(seq), kl_bg=torch.zeros(B, T, device=seq.device))
