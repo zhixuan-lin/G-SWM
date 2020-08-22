@@ -7,7 +7,6 @@ from torch.distributions.kl import kl_divergence
 from .arch import ARCH
 from .module import Flatten, MLP
 
-
 class AgentBgModule(nn.Module):
     "background layer that decomposed into agent & non-agent"
     # TODO (cheolhui): make it compatible with sequential data
@@ -40,30 +39,30 @@ class AgentBgModule(nn.Module):
 
         #! temporal relationship ---------------------------------------
         # temporal encoding of mask latents
-        self.rnn_mask_post_t = nn.LSTMCell(ARCH.Z_CTX_DIM, ARCH.RNN_CTX_HIDDEN_DIM)
-        self.rnn_mask_prior_t = nn.LSTMCell(ARCH.Z_CTX_DIM, ARCH.RNN_CTX_HIDDEN_DIM)
+        self.rnn_mask_post_t = nn.LSTMCell(ARCH.Z_CTX_DIM, ARCH.RNN_CTX_MASK_HIDDEN_DIM)
+        self.rnn_mask_prior_t = nn.LSTMCell(ARCH.Z_CTX_DIM, ARCH.RNN_CTX_MASK_HIDDEN_DIM)
         # temporal encoding of comp latents
-        self.rnn_comp_post_t = nn.LSTMCell(ARCH.Z_CTX_DIM, ARCH.RNN_CTX_HIDDEN_DIM)
-        self.rnn_comp_prior_t = nn.LSTMCell(ARCH.Z_CTX_DIM, ARCH.RNN_CTX_HIDDEN_DIM)
+        self.rnn_comp_post_t = nn.LSTMCell(ARCH.Z_CTX_DIM, ARCH.RNN_CTX_COMP_HIDDEN_DIM)
+        self.rnn_comp_prior_t = nn.LSTMCell(ARCH.Z_CTX_DIM, ARCH.RNN_CTX_COMP_HIDDEN_DIM)
         
-        self.h_mask_post_t = nn.Parameter(torch.randn(1, ARCH.RNN_CTX_HIDDEN_DIM))
-        self.c_mask_post_t = nn.Parameter(torch.randn(1, ARCH.RNN_CTX_HIDDEN_DIM))
-        self.h_mask_prior_t = nn.Parameter(torch.randn(1, ARCH.RNN_CTX_HIDDEN_DIM))
-        self.c_mask_prior_t = nn.Parameter(torch.randn(1, ARCH.RNN_CTX_HIDDEN_DIM))
+        self.h_mask_post_t = nn.Parameter(torch.randn(1, ARCH.RNN_CTX_MASK_HIDDEN_DIM))
+        self.c_mask_post_t = nn.Parameter(torch.randn(1, ARCH.RNN_CTX_MASK_HIDDEN_DIM))
+        self.h_mask_prior_t = nn.Parameter(torch.randn(1, ARCH.RNN_CTX_MASK_HIDDEN_DIM))
+        self.c_mask_prior_t = nn.Parameter(torch.randn(1, ARCH.RNN_CTX_MASK_HIDDEN_DIM))
 
-        self.h_comp_post_t = nn.Parameter(torch.randn(1, ARCH.RNN_CTX_HIDDEN_DIM))
-        self.c_comp_post_t = nn.Parameter(torch.randn(1, ARCH.RNN_CTX_HIDDEN_DIM))
-        self.h_comp_prior_t = nn.Parameter(torch.randn(1, ARCH.RNN_CTX_HIDDEN_DIM))
-        self.c_comp_prior_t = nn.Parameter(torch.randn(1, ARCH.RNN_CTX_HIDDEN_DIM))
-
-        self.prior_net_t = MLP([ARCH.RNN_CTX_HIDDEN_DIM, 128, 128, ARCH.Z_CTX_DIM * 2], act=nn.CELU())
-        self.post_net_t = MLP([ARCH.RNN_CTX_HIDDEN_DIM + ARCH.IMG_ENC_DIM, 128, 128, ARCH.Z_CTX_DIM * 2], act=nn.CELU())
+        self.h_comp_post_t = nn.Parameter(torch.randn(1, ARCH.RNN_CTX_COMP_HIDDEN_DIM))
+        self.c_comp_post_t = nn.Parameter(torch.randn(1, ARCH.RNN_CTX_COMP_HIDDEN_DIM))
+        self.h_comp_prior_t = nn.Parameter(torch.randn(1, ARCH.RNN_CTX_COMP_HIDDEN_DIM))
+        self.c_comp_prior_t = nn.Parameter(torch.randn(1, ARCH.RNN_CTX_COMP_HIDDEN_DIM))
+        # temporal consistency, inputs for the mask network 
+        self.prior_net_t = MLP([ARCH.RNN_CTX_MASK_HIDDEN_DIM, 128, 128, ARCH.Z_CTX_DIM * 2], act=nn.CELU())
+        self.post_net_t = MLP([ARCH.RNN_CTX_MASK_HIDDEN_DIM + ARCH.IMG_ENC_DIM, 128, 128, ARCH.Z_CTX_DIM * 2], act=nn.CELU())
     
 
         #! spatial relationship for ONLY mask latents-------------------
-        self.rnn_mask_post_k = nn.LSTMCell(ARCH.Z_MASK_DIM + ARCH.IMG_ENC_DIM_BG, ARCH.RNN_MASK_HIDDEN_DIM)
-        self.h_mask_post_k = nn.Parameter(torch.zeros(ARCH.RNN_MASK_HIDDEN_DIM))
-        self.c_mask_post_k = nn.Parameter(torch.zeros(ARCH.RNN_MASK_HIDDEN_DIM))
+        self.rnn_mask_post_k = nn.LSTMCell(ARCH.Z_MASK_DIM + ARCH.Z_CTX_DIM * 2, ARCH.RNN_CTX_MASK_HIDDEN_DIM)
+        self.h_mask_post_k = nn.Parameter(torch.zeros(ARCH.RNN_CTX_MASK_HIDDEN_DIM))
+        self.c_mask_post_k = nn.Parameter(torch.zeros(ARCH.RNN_CTX_MASK_HIDDEN_DIM))
 
         #! posteriors ---------------------------------------
         # Dummy z_mask for first step of rnn_mask
@@ -80,10 +79,10 @@ class AgentBgModule(nn.Module):
         else:
             self.comp_decoder = CompDecoderStrong()
         #! priors ---------------------------------------------
-        self.rnn_mask_prior_k = nn.LSTMCell(ARCH.Z_MASK_DIM, ARCH.RNN_MASK_PRIOR_HIDDEN_DIM)
+        self.rnn_mask_prior_k = nn.LSTMCell(ARCH.Z_MASK_DIM, ARCH.RNN_CTX_MASK_PRIOR_HIDDEN_DIM)
         # Initial h and c
-        self.h_mask_post_k = nn.Parameter(torch.zeros(ARCH.RNN_MASK_PRIOR_HIDDEN_DIM))
-        self.c_mask_post_k = nn.Parameter(torch.zeros(ARCH.RNN_MASK_PRIOR_HIDDEN_DIM))
+        self.h_mask_prior_k = nn.Parameter(torch.zeros(ARCH.RNN_CTX_MASK_PRIOR_HIDDEN_DIM))
+        self.c_mask_prior_k = nn.Parameter(torch.zeros(ARCH.RNN_CTX_MASK_PRIOR_HIDDEN_DIM))
         # Compute mask latents
         self.predict_mask_prior = PredictMask()
         # Compute component latents
@@ -119,10 +118,11 @@ class AgentBgModule(nn.Module):
         ee = ee.reshape(B * T, P)
         #! enc = self.image(enc) -> [B*T, 64]; SPACE
         enc = self.enc(seq) # TODO check shape
+        seq = seq.view(B, T, 3, H, W)
         enc = enc.flatten(start_dim=1) # (B*T, D)
 
         enc = self.enc_fc(enc) # [B, T, 128]
-        enc = enc.view(B, T, ARCH.IMG_ENC_DIM) # 
+        enc = enc.view(B, T, ARCH.IMG_ENC_DIM) # [B, T, 128]
         
         # Mask and component latents over the K slots
 
@@ -132,34 +132,34 @@ class AgentBgModule(nn.Module):
 
         #? h_prior_k, c_prior_k?
         #! temporal initial RNN parameters (posts & priors)
-        h_mask_post_t = self.h_mask_post_t.expand(B, ARCH.RNN_CTX_HIDDEN_DIM) # random init nn_params: shape - [B, H]
-        c_mask_post_t = self.c_mask_post_t.expand(B, ARCH.RNN_CTX_HIDDEN_DIM) # random init nn_params: shape - [B, H]
-        h_comp_post_t = self.h_comp_post_t.expand(B, ARCH.RNN_CTX_HIDDEN_DIM) # random init nn_params: shape - [B, H]
-        c_comp_post_t = self.c_comp_post_t.expand(B, ARCH.RNN_CTX_HIDDEN_DIM) # random init nn_params: shape - [B, H]
+        h_mask_post_t = self.h_mask_post_t.expand(B, ARCH.RNN_CTX_MASK_HIDDEN_DIM) # random init nn_params: shape - [B, Hm]
+        c_mask_post_t = self.c_mask_post_t.expand(B, ARCH.RNN_CTX_MASK_HIDDEN_DIM) # random init nn_params: shape - [B, Hm]
+        h_comp_post_t = self.h_comp_post_t.expand(B, ARCH.RNN_CTX_COMP_HIDDEN_DIM) # random init nn_params: shape - [B, Hc]
+        c_comp_post_t = self.c_comp_post_t.expand(B, ARCH.RNN_CTX_COMP_HIDDEN_DIM) # random init nn_params: shape - [B, Hc]
 
-        h_mask_prior_t = self.h_mask_prior_t.expand(B, ARCH.RNN_CTX_HIDDEN_DIM) # random init nn_params: shape - [B, H]
-        c_mask_prior_t = self.c_mask_prior_t.expand(B, ARCH.RNN_CTX_HIDDEN_DIM) # random init nn_params: shape - [B, H]
-        h_comp_prior_t = self.h_comp_prior_t.expand(B, ARCH.RNN_CTX_HIDDEN_DIM) # random init nn_params: shape - [B, H]
-        c_comp_prior_t = self.c_comp_prior_t.expand(B, ARCH.RNN_CTX_HIDDEN_DIM)
+        h_mask_prior_t = self.h_mask_prior_t.expand(B, ARCH.RNN_CTX_MASK_HIDDEN_DIM) # random init nn_params: shape - [B, Hm]
+        c_mask_prior_t = self.c_mask_prior_t.expand(B, ARCH.RNN_CTX_MASK_HIDDEN_DIM) # random init nn_params: shape - [B, Hm]
+        h_comp_prior_t = self.h_comp_prior_t.expand(B, ARCH.RNN_CTX_COMP_HIDDEN_DIM) # random init nn_params: shape - [B, Hc]
+        c_comp_prior_t = self.c_comp_prior_t.expand(B, ARCH.RNN_CTX_COMP_HIDDEN_DIM) # random init nn_params: shape - [B, Hc]
         
         
-        kl_list = []
+        kl_list = [] #? remove this?
         z_ctx_list = []
         # interate over T
         
         masks_t = []
         comps_t = []
         # These two are Normal instances
-        bg_likelihoods = [] # list of Tensors of background likelihoods
+        bg_likelihoods = [] # list of Tensors of background s
         bgs = [] # list of background reconstruction Tensors
         z_mask_total_kl_k_t = 0.0 # sum of mask kls over K and T axes
         z_comp_total_kl_k_t = 0.0 # sum of comp kls over K and T axes
-
+        # iterate over truncated time steps
         for t in range(T):
             #! initialize spatial latents of dim K for every time T
             z_mask = self.z_mask_0.expand(B, ARCH.Z_MASK_DIM) # spatial
-            h_mask_post_k = self.h_mask_post_k.expand(B, ARCH.RNN_MASK_HIDDEN_DIM) # spatial
-            c_mask_post_k = self.c_mask_post_k.expand(B, ARCH.RNN_MASK_HIDDEN_DIM) # spatial
+            h_mask_post_k = self.h_mask_post_k.expand(B, ARCH.RNN_CTX_MASK_HIDDEN_DIM) # spatial
+            c_mask_post_k = self.c_mask_post_k.expand(B, ARCH.RNN_CTX_MASK_HIDDEN_DIM) # spatial
             #! 1) Compute posteriors
             masks = []
             z_masks = []
@@ -168,35 +168,35 @@ class AgentBgModule(nn.Module):
             z_comp_posteriors = []
 
             # Compute posterior
-            # [B, D]
+            # [B, Z_CTX_DIM + IMG_ENC_DIM]
             post_input = torch.cat([h_mask_post_t, enc[:, t]], dim=-1) # 'enc' should span along K
             # [B, D]
             enc = self.post_net_t(post_input) # TODO: which one of 'post_input' / 'params' should be given as input?
-            # iterate over K entities, autoregressively
+            # iterate over K entities, infer autoregressive mask latents
             for k in range(ARCH.K):
                 # Encode x and z_{mask, 1:k}, (b, D)
                 rnn_input = torch.cat((z_mask, enc), dim=1)
                 (h_mask_post_k, c_mask_post_k) = self.rnn_mask_post_k(rnn_input, (h_mask_post_k, c_mask_post_k))
                 # Predict next mask from x and z_{mask, 1:k-1}
-                z_mask_loc, z_mask_scale = self.predict_mask(h_mask_post_k) # mpredict z_mask from RNN
-                z_mask_post = Normal(z_mask_loc, z_mask_scale)
-                z_mask = z_mask_post.rsample()
+                z_mask_loc, z_mask_scale = self.predict_mask(h_mask_post_k) # [B, Zm]
+                z_mask_post = Normal(z_mask_loc, z_mask_scale) # [B, Zm]
+                z_mask = z_mask_post.rsample() # [B, Zm]
                 z_masks.append(z_mask)
                 z_mask_posteriors.append(z_mask_post)
                 # Decode masks
-                mask = self.mask_decoder(z_mask)
+                mask = self.mask_decoder(z_mask) # In - [B, Zm], Out - [B, 1, H, W]
                 masks.append(mask)
             
-            # for each t, infer masks
+            # (B, K, 1, H, W) in range (0, 1)
             masks = torch.stack(masks, dim=1)
             # SBP to ensure to be summed up to 1.
-            masks = self.SBP(masks) #! or use SoftMax: masks = F.softmax(masks, dim=1)
+            masks = self.SBP(masks) # or use SoftMax: masks = F.softmax(masks, dim=1)
 
             B, K, _, H, W = masks.size()
             
             # Reshape (B, K, 1, H, W) -> (B*K, 1, H, W) 
             masks = masks.view(B*K, 1, H, W)
-
+            # add 1e-5 to mask to avoid infinity
             # Concatenate images along channel axis (B*K, 4, H, W); torch.repeat == tf.tile
             comp_vae_input = torch.cat([(masks + 1e-5).log(), 
                 seq[:, t, None].repeat(1, K, 1, 1, 1).view(B*K, 3, H, W)], dim=1)
@@ -238,12 +238,17 @@ class AgentBgModule(nn.Module):
 
             z_mask_total_kl_k = 0.0
             z_comp_total_kl_k = 0.0
-            h_prior_k = self.rnn_mask_h_prior.expand(B, ARCH.RNN_MASK_HIDDEN_DIM) # spatial
-            c_prior_k = self.rnn_mask_c_prior.expand(B, ARCH.RNN_MASK_HIDDEN_DIM) # spatial
+            h_mask_prior_k = self.rnn_mask_h_prior.expand(B, ARCH.RNN_MASK_HIDDEN_DIM) # spatial
+            c_mask_prior_k = self.rnn_mask_c_prior.expand(B, ARCH.RNN_MASK_HIDDEN_DIM) # spatial
+
+            # TODO (cheolhui): add temporal consistency of prior
+            enc = self.prior_net_t(h_mask_prior_t) # update temporal params of prior
 
             for k in range(ARCH.K):
                 #! 2-1) Compute prior distribution over z_masks
-                z_mask_loc_prior, z_mask_scale_prior = self.predict_mask_prior(h_prior_k)
+                rnn_input = enc
+                (h_mask_prior_k, c_mask_prior_k) = self.rnn_mask_prior_k(rnn_input, (h_mask_prior_k, c_mask_prior_k))
+                z_mask_loc_prior, z_mask_scale_prior = self.predict_mask_prior(h_mask_prior_k)
                 z_mask_prior = Normal(z_mask_loc_prior, z_mask_scale_prior)
                 #! 2-2) Compute component prior, using posterior samples
                 z_comp_loc_prior, z_comp_scale_prior = self.predict_comp_prior(z_masks[k])
@@ -254,8 +259,6 @@ class AgentBgModule(nn.Module):
                 # [B,]
                 z_mask_total_kl_k += z_mask_kl
                 z_comp_total_kl_k += z_comp_kl                
-
-                (h_prior_k, c_prior_k) = self.rnn_mask_prior_k(z_mask[k], (h_prior_k, c_prior_k))
 
             #! 3) temporal encode of z_mask & z_comp into h_post & h_prior -> update temporal latents along T-axis
             z_masks = torch.cat(z_masks, dim=-1) # TODO: check shapes
@@ -299,14 +302,14 @@ class AgentBgModule(nn.Module):
         # remained = torch.ones_like(masks[:, 0]) - fg_mask
         new_masks = []
         for k in range(K):
-            if k < K - 1:
+            if k < K - 1: # k = 0, 1, ... K-1
                 mask = masks[:, k] * remained
             else:
                 mask = remained
             remained = remained - mask
             new_masks.append(mask)
     
-        new_masks = torch.stack(new_masks, dim=1)
+        new_masks = torch.stack(new_masks, dim=1) # (B, K, 1, H, W)
     
         return new_masks
             
@@ -338,7 +341,7 @@ class ImageEncoderBg(nn.Module):
             nn.ELU(),
             # 16x downsampled: (64, H/16, W/16)
             Flatten(),
-            nn.Linear(64 * embed_size ** 2, ARCH.IMG_ENC_DIM_BG),
+            nn.Linear(64 * embed_size ** 2, ARCH.IMG_ENC_DIM),
             nn.ELU(),
         )
     
@@ -360,21 +363,21 @@ class PredictMask(nn.Module):
     
     def __init__(self):
         nn.Module.__init__(self)
-        self.fc = nn.Linear(ARCH.RNN_MASK_HIDDEN_DIM, ARCH.Z_MASK_DIM * 2)
+        self.fc = nn.Linear(ARCH.RNN_CTX_MASK_HIDDEN_DIM, ARCH.Z_MASK_DIM * 2)
     
     def forward(self, h):
         """
         Predict z_mask given states from rnn. Used in inference
     
-        :param h: hidden state from rnn_mask
+        :param h: hidden state from rnn_mask - (B, Hm = ARCH.RNN_CTX_MASK_HIDDEN_DIM)
         :return:
             z_mask_loc: (B, D)
             z_mask_scale: (B, D)
         
         """
-        x = self.fc(h)
-        z_mask_loc = x[:, :ARCH.Z_MASK_DIM]
-        z_mask_scale = F.softplus(x[:, ARCH.Z_MASK_DIM:]) + 1e-4
+        x = self.fc(h) # In: [B, Hm], Out: [B, 2 * Zm]
+        z_mask_loc = x[:, :ARCH.Z_MASK_DIM] # [B, Zm]
+        z_mask_scale = F.softplus(x[:, ARCH.Z_MASK_DIM:]) + 1e-4 # [B, Zm]
         
         return z_mask_loc, z_mask_scale
 
@@ -384,14 +387,16 @@ class MaskDecoder(nn.Module):
     
     def __init__(self):
         super(MaskDecoder, self).__init__()
-        
+        # NOTE: all channels of Conv2d are 1d
+        # self.c1 = nn.Conv2d(in_channels=ARCH.Z_MASK_DIM, out_channels=256, kernel_size=1)
+
         self.dec = nn.Sequential(
-            nn.Conv2d(ARCH.Z_MASK_DIM, 256, 1),
+            nn.Conv2d(in_channels=ARCH.Z_MASK_DIM, out_channels=256, kernel_size=1),
             nn.CELU(),
             nn.GroupNorm(16, 256),
             
             nn.Conv2d(256, 256 * 4 * 4, 1),
-            nn.PixelShuffle(4),
+            nn.PixelShuffle(4), # (256 * 4 * 4) -> (256, 4, 4)
             nn.CELU(),
             nn.GroupNorm(16, 256),
             nn.Conv2d(256, 256, 3, 1, 1),
@@ -414,17 +419,17 @@ class MaskDecoder(nn.Module):
             nn.CELU(),
             nn.GroupNorm(8, 64),
             
-            nn.Conv2d(64, 16 * 4 * 4, 1),
-            nn.PixelShuffle(4),
+            nn.Conv2d(64, 16 * 2 * 2, 1),
+            nn.PixelShuffle(2),
             nn.CELU(),
             nn.GroupNorm(4, 16),
             nn.Conv2d(16, 16, 3, 1, 1),
             nn.CELU(),
             nn.GroupNorm(4, 16),
             
-            nn.Conv2d(16, 16, 3, 1, 1),
-            nn.CELU(),
-            nn.GroupNorm(4, 16),
+            # nn.Conv2d(16, 16, 3, 1, 1),
+            # nn.CELU(),
+            # nn.GroupNorm(4, 16),
             nn.Conv2d(16, 1, 3, 1, 1)
         
         )
@@ -439,7 +444,8 @@ class MaskDecoder(nn.Module):
         B = z_mask.size(0)
         # 1d -> 3d, (B, D, 1, 1)
         z_mask = z_mask.view(B, -1, 1, 1)
-        mask = torch.sigmoid(self.dec(z_mask))
+
+        mask = torch.sigmoid(self.dec(z_mask)) # [B, 1, H, W]
         return mask
 
 

@@ -62,10 +62,23 @@ ARCH.PROPOSAL_ENC_DIM = 128
 ARCH.RNN_INPUT_DIM = 128
 # Temporal rnn latent dimensions
 ARCH.RNN_HIDDEN_DIM = 128
+# Latent dimensions, for each entity k in K
+ARCH.Z_MASK_DIM = 32
+ARCH.Z_COMP_DIM = 32
+
+#! --- Background related ---
 # Background rnn hidden dimension
-ARCH.RNN_CTX_HIDDEN_DIM = 128
+ARCH.RNN_CTX_COMP_HIDDEN_DIM = 128
+ARCH.RNN_CTX_COMP_PRIOR_HIDDEN_DIM = 128 # same as above - for kl
+ARCH.RNN_CTX_MASK_HIDDEN_DIM = 64
+ARCH.RNN_CTX_MASK_PRIOR_HIDDEN_DIM = 64 # same as above - for kl
+# Hidden layer dim for the network that computes q(z_c|z_m, x)
+ARCH.PREDICT_COMP_HIDDEN_DIM = 64
 # Action dimension (robot variables)
 ARCH.ACTION_DIM = 7
+
+
+
 
 # Temperature for gumbel-softmax
 ARCH.TAU_START_STEP = 0
@@ -132,16 +145,12 @@ ARCH.AUX_PRES_KL = True
 # Action conditioning for robot agent.
 ARCH.ACTION_COND = 'bg' # 'fg' / 'seperate' - where the action conditoined on.
 
-
-
 # Params from Image shape
     
 ARCH.IMAGE_SHAPE = (64, 64),
 
 # Grid size. There will be G*G slots
 ARCH.G = 8
-
-
 
 # Background configurations
 # ==== START ====
@@ -150,14 +159,7 @@ ARCH.K =  5
 # Background likelihood sigma
 ARCH.BG_SIGMA = 0.15
 # Image encoding dimension
-ARCH.IMG_ENC_DIM_BG = 64
-# Latent dimensions
-ARCH.Z_MASK_DIM = 32
-ARCH.Z_COMP_DIM = 32
 
-# (H, W)
-ARCH.RNN_MASK_HIDDEN_DIM = 64
-# This should be same as above
-ARCH.RNN_MASK_PRIOR_HIDDEN_DIM = 64
-ARCH.PREDICT_COMP_HIDDEN_DIM = 64
+
+
 
