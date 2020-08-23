@@ -142,24 +142,22 @@ class AgentBgModule(nn.Module):
         h_comp_prior_t = self.h_comp_prior_t.expand(B, ARCH.RNN_CTX_COMP_HIDDEN_DIM) # random init nn_params: shape - [B, Hc]
         c_comp_prior_t = self.c_comp_prior_t.expand(B, ARCH.RNN_CTX_COMP_HIDDEN_DIM) # random init nn_params: shape - [B, Hc]
         
-        
-        kl_list = [] #? remove this?
-        z_ctx_list = []
-        # interate over T
-        
-        masks_t = []
-        comps_t = []
+        z_mask_t = []
+        z_comp_t = []
+        masks_t = [] #? visualization / remove this?
+        comps_t = [] #? visualization / remove this?
         # These two are Normal instances
         bg_likelihoods = [] # list of Tensors of background s
         bgs = [] # list of background reconstruction Tensors
-        z_mask_total_kl_k_t = 0.0 # sum of mask kls over K and T axes
-        z_comp_total_kl_k_t = 0.0 # sum of comp kls over K and T axes
+        z_mask_total_kl_k_t = [] # list of mask kls over K and T axes
+        z_comp_total_kl_k_t = [] # list of comp kls over K and T axes
         # iterate over truncated time steps
         for t in range(T):
             #! initialize spatial latents of dim K for every time T
             z_mask = self.z_mask_0.expand(B, ARCH.Z_MASK_DIM) # spatial
             h_mask_post_k = self.h_mask_post_k.expand(B, ARCH.RNN_CTX_MASK_HIDDEN_DIM) # spatial
             c_mask_post_k = self.c_mask_post_k.expand(B, ARCH.RNN_CTX_MASK_HIDDEN_DIM) # spatial
+            
             #! 1) Compute posteriors
             masks = []
             z_masks = []
@@ -191,7 +189,6 @@ class AgentBgModule(nn.Module):
             masks = torch.stack(masks, dim=1)
             # SBP to ensure to be summed up to 1.
             masks = self.SBP(masks) # or use SoftMax: masks = F.softmax(masks, dim=1)
-
             B, K, _, H, W = masks.size()
             
             # Reshape (B, K, 1, H, W) -> (B*K, 1, H, W) 
@@ -213,7 +210,6 @@ class AgentBgModule(nn.Module):
                 z_comp_posteriors.append(z_comp_post_this)
             comps = self.comp_decoder(z_comp) # In - [B * K, Zc], Out - [B*K, 3, H, W]
 
-
             # Decode into component images, [B*K, 3, H, W]
             comps = comps.view(B, K, 3, H, W)
             masks = masks.view(B, K, 1, H, W)
@@ -227,15 +223,10 @@ class AgentBgModule(nn.Module):
             log_sum = log_likelihoods + (masks + 1e-5).log()
             bg_likelihood = torch.logsumexp(log_sum, dim=1)
             bg_likelihoods.append(bg_likelihood) #! final return
-
             bg = (comps * masks).sum(dim=1)
             bgs.append(bg) #! final return
 
-            masks_t.append(masks) #! final return
-            comps_t.append(comps) #! final return
-
             #! 2) Compute priors and KL divergences, for both mask z_m and component z_c
-
             z_mask_total_kl_k = 0.0 # will be tensor of shape [B, ]
             z_comp_total_kl_k = 0.0 # will be tensor of shape [B, ]
             h_mask_prior_k = self.h_mask_prior_k.expand(B, ARCH.RNN_CTX_MASK_HIDDEN_DIM) # spatial
@@ -274,23 +265,33 @@ class AgentBgModule(nn.Module):
             h_comp_prior_t, c_comp_prior_t = self.rnn_comp_prior_t(z_comps, (h_comp_prior_t, c_comp_prior_t))
 
             #! 4) accumulate losses for each time T
-            z_mask_total_kl_k_t += z_mask_total_kl_k
-            z_comp_total_kl_k_t += z_comp_total_kl_k
+            z_mask_total_kl_k_t.append(z_mask_total_kl_k)
+            z_comp_total_kl_k_t.append(z_comp_total_kl_k)
+            
+            #! 4-1) accumulate mask and comp images for visualization
+            masks_t.append(masks) #! final return
+            comps_t.append(comps) #! final return
+
+            #! 4-2) accumulate mask and comp latents 
+            z_mask_t.append(z_masks.view(B, K, -1)) #! final return
+            z_comp_t.append(z_comp) #! final return
 
         #! ------------------------- For visualization ------------------------------
-        kl_bg = z_mask_total_kl_k_t + z_comp_total_kl_k_t
+        kl_bg = [m_kl + c_kl for (m_kl, c_kl) in zip(z_mask_total_kl_k_t, z_comp_total_kl_k_t)]
 
         # TODO: check if returning these logs is necessary
-        log = {
-            # len T list of (B, K, 3, H, W)
-            'comps': comps_t,
+        things = {
+            # (B, T, K, 3, H, W)
+            'comps': torch.stack(comps_t, dim=1),
             # len T list of (B, 1, 3, H, W)
-            'masks': masks_t,
-            # len T list of (B, 3, H, W)
-            'bgs': bgs,
-            'kl_bg': kl_bg
+            'masks': torch.stack(masks_t, dim=1),
+            'z_comps': torch.stack(z_comp_t, dim=1), # (B, T, K, Zc); make sure it's posterior sample
+            'z_masks': torch.stack(z_mask_t, dim=1), # (B, T, K, Zm)
+            'bg': torch.stack(bgs, dim=1), # (B, T, 3, H, W)
+            'kl_bg': torch.stack(kl_bg, dim=1) # (B, T)
         } # bg_likelihoods -> len T list of [B, 3, H, W]
-        return bg_likelihoods, bgs, kl_bg, log
+        # return bg_likelihoods, bgs, kl_bg, log
+        return things 
 
     @staticmethod
     def SBP(masks):

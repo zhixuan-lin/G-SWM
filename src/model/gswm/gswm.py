@@ -222,12 +222,12 @@ class GSWM(nn.Module):
         B, T, C, H, W = seq.size()
         P = ee_poses.size(-1) # 7-dim vector of ee pose
         # Process background
-        if ARCH.BG_ON: # TODO (cheolhui): condition robot on backgrounds
+        if ARCH.BG_ON: # TODO (cheolhui): check the return of bg_things
             bg_things = self.bg_module.encode(seq, ee_poses) # T
             # bg_things = self.bg_module.encode_rob_bg(seq, ee_poses) # T
         else:
             bg_things = dict(bg=torch.zeros_like(seq), kl_bg=torch.zeros(B, T, device=seq.device))
-    
+        # NOTE: bg_things is dictionary
         # Process foreground
         seq_diff = seq - bg_things['bg'] # [B, T, C, H, W] - [B, T, C, H, W] #? masked foreground?
         # (B, T, >C<, H, W)
