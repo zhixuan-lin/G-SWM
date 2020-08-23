@@ -39,11 +39,11 @@ class AgentBgModule(nn.Module):
 
         #! temporal relationship ---------------------------------------
         # temporal encoding of mask latents
-        self.rnn_mask_post_t = nn.LSTMCell(ARCH.Z_CTX_DIM, ARCH.RNN_CTX_MASK_HIDDEN_DIM)
-        self.rnn_mask_prior_t = nn.LSTMCell(ARCH.Z_CTX_DIM, ARCH.RNN_CTX_MASK_HIDDEN_DIM)
+        self.rnn_mask_post_t = nn.LSTMCell(ARCH.Z_MASK_DIM * ARCH.K, ARCH.RNN_CTX_MASK_HIDDEN_DIM)
+        self.rnn_mask_prior_t = nn.LSTMCell(ARCH.Z_MASK_DIM * ARCH.K, ARCH.RNN_CTX_MASK_HIDDEN_DIM)
         # temporal encoding of comp latents
-        self.rnn_comp_post_t = nn.LSTMCell(ARCH.Z_CTX_DIM, ARCH.RNN_CTX_COMP_HIDDEN_DIM)
-        self.rnn_comp_prior_t = nn.LSTMCell(ARCH.Z_CTX_DIM, ARCH.RNN_CTX_COMP_HIDDEN_DIM)
+        self.rnn_comp_post_t = nn.LSTMCell(ARCH.Z_COMP_DIM * ARCH.K, ARCH.RNN_CTX_COMP_HIDDEN_DIM)
+        self.rnn_comp_prior_t = nn.LSTMCell(ARCH.Z_COMP_DIM * ARCH.K, ARCH.RNN_CTX_COMP_HIDDEN_DIM)
         
         self.h_mask_post_t = nn.Parameter(torch.randn(1, ARCH.RNN_CTX_MASK_HIDDEN_DIM))
         self.c_mask_post_t = nn.Parameter(torch.randn(1, ARCH.RNN_CTX_MASK_HIDDEN_DIM))
@@ -171,11 +171,11 @@ class AgentBgModule(nn.Module):
             # [B, Z_CTX_DIM + IMG_ENC_DIM]
             post_input = torch.cat([h_mask_post_t, enc[:, t]], dim=-1) # 'enc' should span along K
             # [B, D]
-            enc = self.post_net_t(post_input) # TODO: which one of 'post_input' / 'params' should be given as input?
+            post_input = self.post_net_t(post_input) # TODO: which one of 'post_input' / 'params' should be given as input?
             # iterate over K entities, infer autoregressive mask latents
             for k in range(ARCH.K):
                 # Encode x and z_{mask, 1:k}, (b, D)
-                rnn_input = torch.cat((z_mask, enc), dim=1)
+                rnn_input = torch.cat((z_mask, post_input), dim=1)
                 (h_mask_post_k, c_mask_post_k) = self.rnn_mask_post_k(rnn_input, (h_mask_post_k, c_mask_post_k))
                 # Predict next mask from x and z_{mask, 1:k-1}
                 z_mask_loc, z_mask_scale = self.predict_mask(h_mask_post_k) # [B, Zm]
@@ -217,7 +217,7 @@ class AgentBgModule(nn.Module):
             # Decode into component images, [B*K, 3, H, W]
             comps = comps.view(B, K, 3, H, W)
             masks = masks.view(B, K, 1, H, W)
-
+            z_comp = z_comp.view(B, K, -1) # for temporal update
             # Compute background likelihoods
             # (B, K, 3, H, W)
             comp_dist = Normal(comps, torch.full_like(comps, self.bg_sigma))
@@ -236,8 +236,8 @@ class AgentBgModule(nn.Module):
 
             #! 2) Compute priors and KL divergences, for both mask z_m and component z_c
 
-            z_mask_total_kl_k = 0.0
-            z_comp_total_kl_k = 0.0
+            z_mask_total_kl_k = 0.0 # will be tensor of shape [B, ]
+            z_comp_total_kl_k = 0.0 # will be tensor of shape [B, ]
             h_mask_prior_k = self.h_mask_prior_k.expand(B, ARCH.RNN_CTX_MASK_HIDDEN_DIM) # spatial
             c_mask_prior_k = self.c_mask_prior_k.expand(B, ARCH.RNN_CTX_MASK_HIDDEN_DIM) # spatial
 
@@ -246,26 +246,30 @@ class AgentBgModule(nn.Module):
 
             for k in range(ARCH.K):
                 #! 2-1) Compute prior distribution over z_masks
-                rnn_input = z_masks[k]
-                (h_mask_prior_k, c_mask_prior_k) = self.rnn_mask_prior_k(rnn_input, (h_mask_prior_k, c_mask_prior_k))
-                z_mask_loc_prior, z_mask_scale_prior = self.predict_mask_prior(h_mask_prior_k)
-                z_mask_prior = Normal(z_mask_loc_prior, z_mask_scale_prior)
+                rnn_input = z_masks[k] # [B, Zm]
+                z_mask_loc_prior, z_mask_scale_prior = self.predict_mask_prior(h_mask_prior_k) # In - [B, Hm], Out - [B, Zm]
+                z_mask_prior = Normal(z_mask_loc_prior, z_mask_scale_prior) # [B, Zm]
                 #! 2-2) Compute component prior, using posterior samples
                 z_comp_loc_prior, z_comp_scale_prior = self.predict_comp_prior(z_masks[k])
                 z_comp_prior = Normal(z_comp_loc_prior, z_comp_scale_prior)
-                # Compute KL for each entity
-                z_mask_kl = kl_divergence(z_mask_posteriors[k], z_mask_prior).sum(dim=1)
-                z_comp_kl = kl_divergence(z_comp_posteriors[k], z_comp_prior).sim(dim=1)
+                # Compute KL for each entity k 
+                z_mask_kl = kl_divergence(z_mask_posteriors[k], z_mask_prior).sum(dim=1) # [B, Zm] sum:-> [B, ]
+                z_comp_kl = kl_divergence(z_comp_posteriors[k], z_comp_prior).sum(dim=1) # [B, Zc] sum:-> [B, ]
                 # [B,]
                 z_mask_total_kl_k += z_mask_kl
                 z_comp_total_kl_k += z_comp_kl                
 
+                # Compute next state, Note that state is conditioned on post. samples.
+                # Thus, this is conditional prior.
+                (h_mask_prior_k, c_mask_prior_k) = self.rnn_mask_prior_k(rnn_input, (h_mask_prior_k, c_mask_prior_k))
+
+            # TODO (cheolhui): deal with change of 
             #! 3) temporal encode of z_mask & z_comp into h_post & h_prior -> update temporal latents along T-axis
-            z_masks = torch.cat(z_masks, dim=-1) # TODO: check shapes
+            z_masks = torch.cat(z_masks, dim=-1) # [B, K * Zm]
             h_mask_post_t, c_mask_post_t = self.rnn_mask_post_t(z_masks, (h_mask_post_t, c_mask_post_t))
             h_mask_prior_t, c_mask_prior_t = self.rnn_mask_prior_t(z_masks, (h_mask_prior_t, c_mask_prior_t))
             
-            z_comps = z_comp.view(B, K, -1)
+            z_comps = z_comp.view(B, -1)
             h_comp_post_t, c_comp_post_t = self.rnn_comp_post_t(z_comps, (h_comp_post_t, c_comp_post_t))
             h_comp_prior_t, c_comp_prior_t = self.rnn_comp_prior_t(z_comps, (h_comp_prior_t, c_comp_prior_t))
 
@@ -278,14 +282,14 @@ class AgentBgModule(nn.Module):
 
         # TODO: check if returning these logs is necessary
         log = {
-            # (B, K, 3, H, W)
+            # len T list of (B, K, 3, H, W)
             'comps': comps_t,
-            # (B, 1, 3, H, W)
+            # len T list of (B, 1, 3, H, W)
             'masks': masks_t,
-            # (B, 3, H, W)
+            # len T list of (B, 3, H, W)
             'bgs': bgs,
             'kl_bg': kl_bg
-        }
+        } # bg_likelihoods -> len T list of [B, 3, H, W]
         return bg_likelihoods, bgs, kl_bg, log
 
     @staticmethod
@@ -641,7 +645,7 @@ class CompDecoderStrong(nn.Module):
 
 class PredictComp(nn.Module):
     """
-    Predict component latents given mask latent
+    Predict component latents given mask latent. Used to infer z_comp_prior
     """
     
     def __init__(self):
