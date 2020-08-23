@@ -55,12 +55,12 @@ class AgentBgModule(nn.Module):
         self.h_comp_prior_t = nn.Parameter(torch.randn(1, ARCH.RNN_CTX_COMP_HIDDEN_DIM))
         self.c_comp_prior_t = nn.Parameter(torch.randn(1, ARCH.RNN_CTX_COMP_HIDDEN_DIM))
         # temporal consistency, inputs for the mask network 
-        self.prior_net_t = MLP([ARCH.RNN_CTX_MASK_HIDDEN_DIM, 128, 128, ARCH.Z_CTX_DIM * 2], act=nn.CELU())
-        self.post_net_t = MLP([ARCH.RNN_CTX_MASK_HIDDEN_DIM + ARCH.IMG_ENC_DIM, 128, 128, ARCH.Z_CTX_DIM * 2], act=nn.CELU())
+        self.post_net_t = MLP([ARCH.RNN_CTX_MASK_HIDDEN_DIM + ARCH.IMG_ENC_DIM, 128, 128, ARCH.Z_MASK_DIM * 2], act=nn.CELU())
+        # self.prior_net_t = MLP([ARCH.RNN_CTX_MASK_HIDDEN_DIM, 128, 128, ARCH.Z_MASK_DIM * 2], act=nn.CELU())
     
 
         #! spatial relationship for ONLY mask latents-------------------
-        self.rnn_mask_post_k = nn.LSTMCell(ARCH.Z_MASK_DIM + ARCH.Z_CTX_DIM * 2, ARCH.RNN_CTX_MASK_HIDDEN_DIM)
+        self.rnn_mask_post_k = nn.LSTMCell(ARCH.Z_MASK_DIM + ARCH.Z_MASK_DIM * 2, ARCH.RNN_CTX_MASK_HIDDEN_DIM)
         self.h_mask_post_k = nn.Parameter(torch.zeros(ARCH.RNN_CTX_MASK_HIDDEN_DIM))
         self.c_mask_post_k = nn.Parameter(torch.zeros(ARCH.RNN_CTX_MASK_HIDDEN_DIM))
 
@@ -201,17 +201,17 @@ class AgentBgModule(nn.Module):
             comp_vae_input = torch.cat([(masks + 1e-5).log(), 
                 seq[:, t, None].repeat(1, K, 1, 1, 1).view(B*K, 3, H, W)], dim=1)
             # Component latents, each [B*K, L]
-            z_comp_loc, z_comp_scale = self.comp_encoder(comp_vae_input)
+            z_comp_loc, z_comp_scale = self.comp_encoder(comp_vae_input) # [B, Zc]
             z_comp_post = Normal(z_comp_loc, z_comp_scale)
-            z_comp = z_comp_post.r_sample() # TODO: check its shape
+            z_comp = z_comp_post.rsample() # TODO: check its shape
 
             #! 1-1) acquire component posteriors here, for computing KL divergences
             z_comp_loc_reshape = z_comp_loc.view(B, K, -1)
             z_comp_scale_reshape = z_comp_scale.view(B, K, -1)
-            for i in range(ARCH.K):
-                z_comp_post_this = Normal(z_comp_loc_reshape[:, i], z_comp_scale_reshape[:, i])
+            for k in range(ARCH.K):
+                z_comp_post_this = Normal(z_comp_loc_reshape[:, k], z_comp_scale_reshape[:, k])
                 z_comp_posteriors.append(z_comp_post_this)
-            comps = self.comp_decoder(z_comp)
+            comps = self.comp_decoder(z_comp) # In - [B * K, Zc], Out - [B*K, 3, H, W]
 
 
             # Decode into component images, [B*K, 3, H, W]
@@ -238,15 +238,15 @@ class AgentBgModule(nn.Module):
 
             z_mask_total_kl_k = 0.0
             z_comp_total_kl_k = 0.0
-            h_mask_prior_k = self.rnn_mask_h_prior.expand(B, ARCH.RNN_MASK_HIDDEN_DIM) # spatial
-            c_mask_prior_k = self.rnn_mask_c_prior.expand(B, ARCH.RNN_MASK_HIDDEN_DIM) # spatial
+            h_mask_prior_k = self.h_mask_prior_k.expand(B, ARCH.RNN_CTX_MASK_HIDDEN_DIM) # spatial
+            c_mask_prior_k = self.c_mask_prior_k.expand(B, ARCH.RNN_CTX_MASK_HIDDEN_DIM) # spatial
 
             # TODO (cheolhui): add temporal consistency of prior
-            enc = self.prior_net_t(h_mask_prior_t) # update temporal params of prior
+            # enc = self.prior_net_t(h_mask_prior_t) # In - [B, Zm], Out - [B, 2*]
 
             for k in range(ARCH.K):
                 #! 2-1) Compute prior distribution over z_masks
-                rnn_input = enc
+                rnn_input = z_masks[k]
                 (h_mask_prior_k, c_mask_prior_k) = self.rnn_mask_prior_k(rnn_input, (h_mask_prior_k, c_mask_prior_k))
                 z_mask_loc_prior, z_mask_scale_prior = self.predict_mask_prior(h_mask_prior_k)
                 z_mask_prior = Normal(z_mask_loc_prior, z_mask_scale_prior)
@@ -457,35 +457,46 @@ class CompEncoder(nn.Module):
     def __init__(self):
         nn.Module.__init__(self)
         
-        embed_size = ARCH.IMG_SHAPE[0] // 16
-        self.enc = nn.Sequential(
-            nn.Conv2d(4, 32, 3, 2, 1),
+        embed_size = ARCH.IMG_SHAPE[0] // 8 # divide by 2^N since we do N Convs
+        self.enc = nn.Sequential( # (D_in + 2*padding - kernel) / stride + 1
+            nn.Conv2d(4, 32, kernel_size=3, stride=2, padding=1), # [B, 32, 32, 32], 32 = floor[(64 + 2*1 -3)/2] + 1
             nn.BatchNorm2d(32),
             nn.ELU(),
-            nn.Conv2d(32, 32, 3, 2, 1),
+            nn.Conv2d(32, 32, 3, 2, 1), # [B, 32, 16, 16]
             nn.BatchNorm2d(32),
             nn.ELU(),
-            nn.Conv2d(32, 64, 3, 2, 1),
+            nn.Conv2d(32, 64, 3, 2, 1), # [B, 64, 8, 8]
             nn.BatchNorm2d(64),
             nn.ELU(),
-            nn.Conv2d(64, 64, 3, 2, 1),
-            nn.BatchNorm2d(64),
-            nn.ELU(),
-            Flatten(),
+            # nn.Conv2d(64, 64, 3, 2, 1), # [B, 64, 4, 4]
+            # nn.BatchNorm2d(64),
+            # nn.ELU(),
+            Flatten(), # [B, 64 * 4 * 4]
             # 16x downsampled: (64, 4, 4)
             nn.Linear(64 * embed_size ** 2, ARCH.Z_COMP_DIM * 2),
         )
-    
+        # self.c1 = nn.Conv2d(4, 32, kernel_size=3, stride=2, padding=1)
+        # self.b1 = nn.BatchNorm2d(32)
+        # self.c2 = nn.Conv2d(32, 32, 3, 2, 1)
+        # self.b2 = nn.BatchNorm2d(32)
+        # self.c3 = nn.Conv2d(32, 64, 3, 2, 1)
+        # self.b3 = nn.BatchNorm2d(64)
+        # self.c4 = nn.Conv2d(64, 64, 3, 2, 1)
+        # self.b4 = nn.BatchNorm2d(64)
+        # self.f = Flatten()
+        # self.l1 = nn.Linear(64 * embed_size ** 2, ARCH.Z_COMP_DIM * 2)
+
+
     def forward(self, x):
         """
         Predict component latent parameters given image and predicted mask concatenated
-        
-        :param x: (B, 3+1, H, W). Image and mask concatenated
+        # TODO (cheolhui): adjust the CompEncode to adapt to reduced image size.
+        :param x: (B*K, 3+1, H, W). Image and mask concatenated
         :return:
             z_comp_loc: (B, D)
             z_comp_scale: (B, D)
         """
-        x = self.enc(x)
+        x = self.enc(x) # [B, 2 * Zc]
         z_comp_loc = x[:, :ARCH.Z_COMP_DIM]
         z_comp_scale = F.softplus(x[:, ARCH.Z_COMP_DIM:]) + 1e-4
         
@@ -516,9 +527,9 @@ class SpatialBroadcast(nn.Module):
         x = x.expand(B, L, width, height)
         xx = torch.linspace(-1, 1, width, device=x.device)
         yy = torch.linspace(-1, 1, height, device=x.device)
-        yy, xx = torch.meshgrid((yy, xx))
+        yy, xx = torch.meshgrid((yy, xx)) #  [H + 8, W + 8] # TODO: reduce the dim.
         # (2, H, W)
-        coords = torch.stack((xx, yy), dim=0)
+        coords = torch.stack((xx, yy), dim=0) # [2, H + 8, W + 8]
         # (B, 2, H, W)
         coords = coords[None].expand(B, 2, height, width)
         
@@ -532,7 +543,7 @@ class CompDecoder(nn.Module):
     """
     Decoder z_comp into component image
     """
-    
+    # TODO (cheolhui): adjust the layers to fit the image shape
     def __init__(self):
         nn.Module.__init__(self)
         self.spatial_broadcast = SpatialBroadcast()
@@ -547,8 +558,8 @@ class CompDecoder(nn.Module):
             nn.Conv2d(32, 32, 3, 1),
             nn.BatchNorm2d(32),
             nn.ELU(),
-            nn.Conv2d(32, 32, 3, 1),
-            nn.BatchNorm2d(32),
+            # nn.Conv2d(32, 32, 3, 1),
+            # nn.BatchNorm2d(32),
             nn.ELU(),
             # 16x downsampled: (32, 4, 4)
             nn.Conv2d(32, 3, 1, 1),
@@ -561,7 +572,7 @@ class CompDecoder(nn.Module):
         """
         h, w = ARCH.IMG_SHAPE 
         # (B, L) -> (B, L+2, H, W)
-        z_comp = self.spatial_broadcast(z_comp, h + 8, w + 8)
+        z_comp = self.spatial_broadcast(z_comp, h + 6, w + 6) # add 8 as we apply 4 dim reducing Convs
         # -> (B, 3, H, W)
         comp = self.decoder(z_comp)
         comp = torch.sigmoid(comp)
