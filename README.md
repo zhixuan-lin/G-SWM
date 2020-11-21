@@ -86,7 +86,7 @@ data
 
 ## Visualization with pretrained models
 
-To help you quickly get a feeling of how the code works, we provide pretrained models for all experiments in the paper. These models can be downloaded from this Google Drive directory: [GSWM](https://drive.google.com/drive/directorys/1gyuU5u4is37N7m0CBmZ83RKcELPB5wy5?usp=sharing). Please put the downloaded checkpoints (`.pth` files) to the `pretrained` directory.
+To help you quickly get a feeling of how the code works, we provide pretrained models for all experiments in the paper. These models can be downloaded from this Google Drive directory: [GSWM](https://drive.google.com/drive/folders/1gyuU5u4is37N7m0CBmZ83RKcELPB5wy5?usp=sharing). Please put the downloaded checkpoints (`.pth` files) to the `pretrained` directory.
 
 We also provide scripts for downloading these checkpoints. These scripts are in the `scripts/download_pretrained/` directory. For example, if you need the model checkpoint for the maze dataset, run
 
