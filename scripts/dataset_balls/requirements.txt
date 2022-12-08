@@ -1,4 +1,4 @@
-certifi==2019.11.28
+certifi==2022.12.7
 chardet==3.0.4
 decorator==4.4.1
 h5py==2.10.0
